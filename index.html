@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Koro</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --main-blue: #1da1f2; --bg-gray: #f5f8fa; --text-gray: #657786; }
+        body { font-family: -apple-system, sans-serif; max-width: 600px; margin: auto; padding: 0; background: var(--bg-gray); }
+        .card { background: white; padding: 15px; border-bottom: 1px solid #e1e8ed; }
+        .header { background: white; padding: 15px; position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; z-index: 100; }
+        .post { cursor: pointer; transition: 0.2s; text-decoration: none; color: inherit; display: block; }
+        .post:hover { background: #f9f9f9; }
+        .display-name { font-weight: bold; margin-right: 5px; }
+        .handle { color: var(--text-gray); }
+        textarea { width: 100%; height: 80px; border: 1px solid #e1e8ed; border-radius: 12px; padding: 10px; box-sizing: border-box; resize: none; font-size: 16px; margin-bottom: 10px; }
+        button { background: var(--main-blue); color: white; border: none; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; }
+        .profile-header { background: white; padding: 30px 20px; text-align: center; border-bottom: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1 style="margin:0; font-size:20px; cursor:pointer;" onclick="navigate('/')">Koro</h1>
+        <div id="auth-section"></div>
+    </div>
+
+    <div id="app-content">
+        </div>
+
+    <script>
+        const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
+        const SUPABASE_KEY = 'YOUR_ANON_KEY';
+        const supaClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let myProfile = null;
+
+        // URLをきれいに保ったまま遷移する関数
+        function navigate(path) {
+            window.history.pushState({}, '', path);
+            router();
+        }
+
+        // URLを見て表示を切り替えるルーター
+        async function router() {
+            const path = window.location.pathname; // "/@hiko" など
+            const app = document.getElementById('app-content');
+            const user = (await supaClient.auth.getUser()).data.user;
+
+            // ログインチェック
+            if (user && !myProfile) {
+                const { data } = await supaClient.from('profiles').select('*').eq('id', user.id).single();
+                if (!data) return showSetup();
+                myProfile = data;
+            }
+
+            // 認証ボタンの更新
+            document.getElementById('auth-section').innerHTML = user ? 
+                `<button onclick="logout()" style="background:#ccc; font-size:12px;">ログアウト</button>` : 
+                `<button onclick="login()">Googleログイン</button>`;
+
+            if (path.startsWith('/@')) {
+                const handle = path.replace('/@', '');
+                showProfile(handle);
+            } else {
+                showHome();
+            }
+        }
+
+        async function showHome() {
+            const app = document.getElementById('app-content');
+            app.innerHTML = `
+                <div class="card" id="post-box" style="${myProfile ? '' : 'display:none'}">
+                    <textarea id="post-content" placeholder="ころっとする？"></textarea>
+                    <div style="text-align:right;"><button onclick="postKorotto()">ころっと！</button></div>
+                </div>
+                <div id="timeline"></div>
+            `;
+            fetchPosts();
+        }
+
+        async function showProfile(handle) {
+            const app = document.getElementById('app-content');
+            const { data: profile } = await supaClient.from('profiles').select('*').eq('user_handle', handle).single();
+            
+            if (!profile) {
+                app.innerHTML = `<div class="card">ユーザーが見つかりません</div>`;
+                return;
+            }
+
+            app.innerHTML = `
+                <div class="profile-header">
+                    <h2 style="margin:0;">${profile.display_name}</h2>
+                    <div class="handle">@${profile.user_handle}</div>
+                </div>
+                <div id="user-posts"></div>
+            `;
+            fetchPosts(profile.id, 'user-posts');
+        }
+
+        function showSetup() {
+            document.getElementById('app-content').innerHTML = `
+                <div class="card" style="text-align:center; padding:40px;">
+                    <h2>Koroへようこそ</h2>
+                    <input type="text" id="s-name" placeholder="名前" style="width:100%; padding:10px; margin:10px 0;">
+                    <input type="text" id="s-handle" placeholder="ユーザーID" style="width:100%; padding:10px; margin:10px 0;">
+                    <button onclick="saveProfile()">開始</button>
+                </div>
+            `;
+        }
+
+        async function postKorotto() {
+            const content = document.getElementById('post-content').value;
+            if (!content) return;
+            await supaClient.from('posts').insert([{ 
+                content, author_id: myProfile.id, author_name: myProfile.display_name, author_handle: myProfile.user_handle 
+            }]);
+            document.getElementById('post-content').value = '';
+            fetchPosts();
+        }
+
+        async function fetchPosts(uid = null, target = 'timeline') {
+            let q = supaClient.from('posts').select('*').order('created_at', { ascending: false });
+            if (uid) q = q.eq('author_id', uid);
+            const { data } = await q;
+            document.getElementById(target).innerHTML = data.map(p => `
+                <div class="card post" onclick="event.preventDefault(); navigate('/@${p.author_handle}')">
+                    <span class="display-name">${p.author_name}</span>
+                    <span class="handle">@${p.author_handle}</span>
+                    <div style="margin-top:8px;">${p.content}</div>
+                </div>
+            `).join('');
+        }
+
+        async function login() {
+            await supaClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+        }
+        async function logout() { await supaClient.auth.signOut(); location.reload(); }
+        async function saveProfile() {
+            const user = (await supaClient.auth.getUser()).data.user;
+            const name = document.getElementById('s-name').value;
+            const handle = document.getElementById('s-handle').value;
+            await supaClient.from('profiles').insert([{ id: user.id, display_name: name, user_handle: handle }]);
+            location.reload();
+        }
+
+        window.onpopstate = router;
+        router();
+    </script>
+</body>
+</html>
