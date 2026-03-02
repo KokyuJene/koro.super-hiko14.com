@@ -1,0 +1,424 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プロフィール - Koro</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="/koro.css">
+</head>
+<body>
+
+    <header class="site-header">
+        <a href="/" class="logo">Koro</a>
+        <div class="header-right" id="header-right"></div>
+    </header>
+
+    <div id="profile-area" class="profile-wrap">
+        <div class="load-more-msg">読み込み中...</div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://ztdomjtbvhbcoaafkbhv.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
+        const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const STORAGE_BUCKET = 'koro-media';
+        const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+        let mySession = null;
+        let myHandle  = null;
+        let editAvatarFile = null;
+        let editHeaderFile = null;
+
+        // テーマ
+        (function applyTheme() {
+            const saved = localStorage.getItem('koro-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', saved);
+        })();
+
+        function toggleTheme() {
+            const cur = document.documentElement.getAttribute('data-theme') || 'light';
+            const next = cur === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('koro-theme', next);
+            updateThemeIcon();
+        }
+
+        function updateThemeIcon() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const btn = document.getElementById('theme-toggle');
+            if (!btn) return;
+            btn.innerHTML = isDark ? sunSVG() : moonSVG();
+            btn.title = isDark ? 'ライトモードへ' : 'ダークモードへ';
+        }
+
+        function moonSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Z"/></svg>';
+        }
+        function sunSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Zm326-268Z"/></svg>';
+        }
+        function avatarSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>';
+        }
+        function pencilSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor"><path d="M200-200h40l439-439-40-40-439 439v40Zm-40 80v-104l565-565q11-12 26-18t31-6q16 0 31 6t26 17l42 42q11 11 17 26t6 31q0 16-6 31t-18 26L315-120H160Zm600-557-43-43 43 43Zm-114 71-20-20 40 40-20-20Z"/></svg>';
+        }
+        function imgSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M232-172q-26 0-43-17t-17-43v-496q0-26 17-43t43-17h496q26 0 43 17t17 43v496q0 26-17 43t-43 17H232Zm0-60h496v-496H232v496Zm28-76h440L576-480 456-320l-96-128-100 140Zm-28 76v-496 496Z"/></svg>';
+        }
+        function onAvatarError(el) {
+            const parent = el.parentElement;
+            if (!parent) return;
+            el.remove();
+            parent.innerHTML = avatarSVG();
+        }
+        function postAvatarError(el) {
+            const p = el.parentElement;
+            if (!p) return;
+            el.remove();
+            p.innerHTML = avatarSVG();
+        }
+
+        // ドロップダウン
+        function toggleDropdown(e) {
+            e.stopPropagation();
+            const dd = document.getElementById('account-dropdown');
+            if (dd) dd.classList.toggle('open');
+        }
+        document.addEventListener('click', function() {
+            const dd = document.getElementById('account-dropdown');
+            if (dd) dd.classList.remove('open');
+        });
+
+        // URLから @handle 取得
+        function getHandleFromURL() {
+            const search = location.search.slice(1);
+            if (!search) return null;
+            const params = new URLSearchParams(search);
+            if (params.has('handle')) return params.get('handle').replace(/^@/, '');
+            const firstKey = Array.from(params.keys())[0] || '';
+            if (firstKey.startsWith('@')) return firstKey.slice(1);
+            if (firstKey) return firstKey;
+            return null;
+        }
+
+        // 初期化
+        async function init() {
+            const { data: { session } } = await supa.auth.getSession();
+            mySession = session;
+
+            if (session) {
+                const { data: myProfile } = await supa.from('profiles').select('user_handle').eq('id', session.user.id).single();
+                myHandle = myProfile ? myProfile.user_handle : null;
+            }
+
+            renderHeader(session);
+
+            const handle = getHandleFromURL();
+            if (!handle) {
+                showNotFound('URLにハンドルが指定されていません');
+                return;
+            }
+
+            await loadProfile(handle);
+
+            if (location.hash === '#edit') {
+                const panel = document.getElementById('edit-panel');
+                if (panel) {
+                    panel.classList.add('open');
+                    panel.scrollIntoView({ behavior: 'smooth' });
+                }
+            }
+        }
+
+        function renderHeader(session) {
+            const headerRight = document.getElementById('header-right');
+            const themeBtn = '<button class="icon-btn" id="theme-toggle" onclick="toggleTheme()" title="テーマ切替"></button>';
+
+            if (session) {
+                const profileHref = myHandle ? '/user/?@' + myHandle : '/user/';
+                const editHref    = myHandle ? '/user/?@' + myHandle + '#edit' : '/user/#edit';
+                headerRight.innerHTML = themeBtn +
+                    '<div class="account-wrap">' +
+                    '<button class="account-btn" id="account-btn" onclick="toggleDropdown(event)" title="アカウント"></button>' +
+                    '<div class="account-dropdown" id="account-dropdown">' +
+                    '<a class="dropdown-item" href="' + profileHref + '">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>' +
+                    'プロフィール</a>' +
+                    '<a class="dropdown-item" href="' + editHref + '">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M200-200h40l439-439-40-40-439 439v40Zm-40 80v-104l565-565q11-12 26-18t31-6q16 0 31 6t26 17l42 42q11 11 17 26t6 31q0 16-6 31t-18 26L315-120H160Zm600-557-43-43 43 43Zm-114 71-20-20 40 40-20-20Z"/></svg>' +
+                    'プロフィール編集</a>' +
+                    '<button class="dropdown-item danger" onclick="supa.auth.signOut().then(function(){location.href=\'/\';})">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h280v80H200Zm440-160-55-58 102-102H360v-80h327L585-622l55-58 200 200-200 200Z"/></svg>' +
+                    'ログアウト</button>' +
+                    '</div></div>';
+
+                const tBtn = document.getElementById('theme-toggle');
+                if (tBtn) tBtn.innerHTML = moonSVG();
+                const aBtn = document.getElementById('account-btn');
+                if (aBtn) aBtn.innerHTML = avatarSVG();
+
+                if (session) updateAccountAvatar(session.user.id);
+            } else {
+                headerRight.innerHTML = themeBtn + '<a href="/"><button class="btn">ログイン</button></a>';
+                const tBtn = document.getElementById('theme-toggle');
+                if (tBtn) tBtn.innerHTML = moonSVG();
+            }
+            updateThemeIcon();
+        }
+
+        function updateAccountAvatar(uid) {
+            const btn = document.getElementById('account-btn');
+            if (!btn) return;
+            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl('profiles/' + uid + '/avatar');
+            if (!data || !data.publicUrl) return;
+            const img = new Image();
+            img.src = data.publicUrl;
+            img.onerror = function() {};
+            img.onload = function() {
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+                btn.innerHTML = '';
+                btn.appendChild(img);
+            };
+        }
+
+        // プロフィール読み込み
+        async function loadProfile(handle) {
+            const { data: profile, error } = await supa
+                .from('profiles').select('*').eq('user_handle', handle).single();
+
+            if (error || !profile) {
+                showNotFound('@' + handle + ' は見つかりませんでした');
+                return;
+            }
+
+            document.title = profile.display_name + ' (@' + profile.user_handle + ') - Koro';
+
+            const { count } = await supa
+                .from('posts').select('*', { count: 'exact', head: true }).eq('author_handle', handle);
+
+            const isOwn = myHandle && myHandle === profile.user_handle;
+            const avatarChar = profile.display_name ? profile.display_name[0].toUpperCase() : '?';
+            const avatarUrl  = getStoragePublicUrl('profiles/' + profile.id + '/avatar');
+            const headerUrl  = getStoragePublicUrl('profiles/' + profile.id + '/header');
+
+            var editBtn = isOwn
+                ? '<button class="profile-edit-btn" title="プロフィール編集" onclick="toggleEditPanel()">' + pencilSVG() + '</button>'
+                : '';
+
+            var editPanel = isOwn
+                ? '<div class="profile-edit-panel" id="edit-panel">' +
+                  '<label class="field-label">表示名</label>' +
+                  '<input class="field" id="edit-name" type="text" value="' + escapeHTML(profile.display_name) + '" placeholder="表示名">' +
+                  '<label class="field-label">アイコン画像</label>' +
+                  '<div class="edit-img-row">' +
+                  '<label class="edit-img-label">' + imgSVG() + 'アイコン選択<input type="file" accept="image/*" onchange="onSelectEditAvatar(event)"></label>' +
+                  '<span id="edit-avatar-name" class="hint"></span>' +
+                  '</div>' +
+                  '<label class="field-label">ヘッダー画像</label>' +
+                  '<div class="edit-img-row">' +
+                  '<label class="edit-img-label">' + imgSVG() + 'ヘッダー選択<input type="file" accept="image/*" onchange="onSelectEditHeader(event)"></label>' +
+                  '<span id="edit-header-name" class="hint"></span>' +
+                  '</div>' +
+                  '<p class="hint">2MB超の画像は自動圧縮されます。</p>' +
+                  '<button class="btn" style="margin-top:14px;width:100%;" onclick="saveEditProfile(\'' + escapeHTML(profile.id) + '\')">保存する</button>' +
+                  '</div>'
+                : '';
+
+            var bioPart = profile.bio
+                ? '<div class="profile-bio">' + escapeHTML(profile.bio) + '</div>'
+                : '';
+
+            document.getElementById('profile-area').innerHTML =
+                '<div class="profile-card">' +
+                '<div class="profile-banner">' +
+                '<img class="profile-banner-img" src="' + escapeHTML(headerUrl) + '" alt="header" loading="lazy" onerror="this.style.display=\'none\'">' +
+                '</div>' +
+                '<div class="profile-body">' +
+                '<div class="profile-top-row">' +
+                '<div class="profile-avatar">' +
+                '<img class="profile-avatar-img" src="' + escapeHTML(avatarUrl) + '" alt="avatar" loading="lazy"' +
+                ' onerror="onAvatarError(this)">' +
+                '</div>' +
+                editBtn +
+                '</div>' +
+                '<div class="profile-info">' +
+                '<div class="profile-name">' + escapeHTML(profile.display_name) + '</div>' +
+                '<div class="profile-handle">@' + escapeHTML(profile.user_handle) + '</div>' +
+                bioPart +
+                '</div>' +
+                '<div class="profile-stats">' +
+                '<span class="profile-stat"><b>' + (count || 0) + '</b> ころっと</span>' +
+                '</div>' +
+                '</div>' +
+                editPanel +
+                '</div>' +
+                '<div class="posts-list" id="posts-list">' +
+                '<div class="section-label">ころっと</div>' +
+                '<div id="user-timeline">読み込み中...</div>' +
+                '</div>';
+
+            await loadUserPosts(handle, profile.id);
+        }
+
+        function toggleEditPanel() {
+            const panel = document.getElementById('edit-panel');
+            if (panel) panel.classList.toggle('open');
+        }
+
+        function onSelectEditAvatar(event) {
+            editAvatarFile = event.target.files ? event.target.files[0] : null;
+            const span = document.getElementById('edit-avatar-name');
+            if (span) span.textContent = editAvatarFile ? editAvatarFile.name : '';
+        }
+
+        function onSelectEditHeader(event) {
+            editHeaderFile = event.target.files ? event.target.files[0] : null;
+            const span = document.getElementById('edit-header-name');
+            if (span) span.textContent = editHeaderFile ? editHeaderFile.name : '';
+        }
+
+        async function saveEditProfile(uid) {
+            const name = document.getElementById('edit-name').value.trim();
+            if (!name) return alert('表示名を入力してください');
+
+            const btn = document.querySelector('#edit-panel .btn');
+            if (btn) btn.disabled = true;
+
+            try {
+                if (editAvatarFile) await uploadImageToStorage(editAvatarFile, 'profiles/' + uid + '/avatar');
+                if (editHeaderFile) await uploadImageToStorage(editHeaderFile, 'profiles/' + uid + '/header');
+
+                const { error } = await supa.from('profiles').update({ display_name: name }).eq('id', uid);
+                if (error) throw error;
+
+                editAvatarFile = null;
+                editHeaderFile = null;
+                alert('プロフィールを更新しました！');
+                location.reload();
+            } catch (err) {
+                alert('更新に失敗しました: ' + (err && err.message ? err.message : err));
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // ユーザー投稿
+        async function loadUserPosts(handle, profileId) {
+            const { data, error } = await supa
+                .from('posts').select('*').eq('author_handle', handle).order('created_at', { ascending: false });
+
+            const timeline = document.getElementById('user-timeline');
+            if (error) { timeline.innerHTML = '<div class="load-more-msg">読み込みエラー</div>'; return; }
+            if (!data || data.length === 0) { timeline.innerHTML = '<div class="load-more-msg">まだころっとがありません</div>'; return; }
+
+            const avatarSrc = profileId ? (SUPABASE_URL + '/storage/v1/object/public/' + STORAGE_BUCKET + '/profiles/' + profileId + '/avatar' + '?v=' + Date.now()) : '';
+
+            timeline.innerHTML = data.map(function(p) {
+                const parsed = splitPostContent(p.content);
+                const imgPart = parsed.imageUrl
+                    ? '<div class="post-image"><img src="' + escapeHTML(parsed.imageUrl) + '" alt="post image" loading="lazy"></div>'
+                    : '';
+                const avImg = avatarSrc
+                    ? '<img src="' + escapeHTML(avatarSrc) + '" alt="" loading="lazy" onerror="postAvatarError(this)">'
+                    : avatarSVG();
+                return '<div class="post-item">' +
+                    '<div class="post-row">' +
+                    '<a href="/user/?@' + escapeHTML(p.author_handle || '') + '" class="post-avatar-sm">' + avImg + '</a>' +
+                    '<div class="post-row-content">' +
+                    '<div class="post-meta">' +
+                    '<span class="post-name">' + escapeHTML(p.author || 'ななし') + '</span>' +
+                    '<span class="post-handle">@' + escapeHTML(p.author_handle || 'none') + '</span>' +
+                    '<span class="post-time">' + formatDate(p.created_at) + '</span>' +
+                    '</div>' +
+                    '<div class="post-body">' + escapeHTML(parsed.text) + '</div>' +
+                    imgPart +
+                    '</div>' +
+                    '</div>' +
+                    '</div>';
+            }).join('');
+        }
+
+        // 画像圧縮
+        async function compressImageIfNeeded(file) {
+            if (!(file instanceof File)) return file;
+            if (file.size <= MAX_IMAGE_BYTES) return file;
+            const bitmap = await createImageBitmap(file);
+            let w = bitmap.width, h = bitmap.height;
+            const maxSide = 1920;
+            if (Math.max(w, h) > maxSide) { const r = maxSide / Math.max(w, h); w = Math.round(w*r); h = Math.round(h*r); }
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = w; canvas.height = h;
+            ctx.drawImage(bitmap, 0, 0, w, h);
+            let quality = 0.9, blob = null;
+            for (let i = 0; i < 8; i++) {
+                blob = await new Promise(function(resolve) { canvas.toBlob(resolve, 'image/jpeg', quality); });
+                if (!blob || blob.size <= MAX_IMAGE_BYTES) break;
+                quality -= 0.1;
+                if (quality < 0.35) {
+                    const nW = Math.max(600, Math.round(canvas.width * 0.9));
+                    const nH = Math.max(600, Math.round(canvas.height * 0.9));
+                    const tmp = document.createElement('canvas');
+                    tmp.width = nW; tmp.height = nH;
+                    tmp.getContext('2d').drawImage(canvas, 0, 0, nW, nH);
+                    canvas.width = nW; canvas.height = nH;
+                    ctx.clearRect(0, 0, nW, nH); ctx.drawImage(tmp, 0, 0);
+                    quality = 0.8;
+                }
+            }
+            if (!blob) return file;
+            return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+        }
+
+        async function uploadImageToStorage(file, path) {
+            const optimized = await compressImageIfNeeded(file);
+            const { error } = await supa.storage.from(STORAGE_BUCKET).upload(path, optimized, {
+                upsert: true, contentType: optimized.type || 'image/jpeg'
+            });
+            if (error) throw error;
+            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+            return data.publicUrl + '?v=' + Date.now();
+        }
+
+        // ユーティリティ
+        function splitPostContent(rawContent) {
+            const content = String(rawContent || '');
+            const match = content.match(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/);
+            if (!match) return { text: content, imageUrl: '' };
+            const text = content.replace(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/, '').trim();
+            return { text: text, imageUrl: match[1] };
+        }
+
+        function getStoragePublicUrl(path) {
+            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+            return data.publicUrl + '?v=' + Date.now();
+        }
+
+        function showNotFound(msg) {
+            document.getElementById('profile-area').innerHTML =
+                '<div class="not-found">' +
+                '<h2>見つかりません</h2>' +
+                '<p>' + escapeHTML(msg) + '</p>' +
+                '<a href="/"><button class="btn">ホームへ戻る</button></a>' +
+                '</div>';
+        }
+
+        function escapeHTML(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function formatDate(iso) {
+            if (!iso) return '';
+            const d = new Date(iso), now = new Date(), diff = (now - d) / 1000;
+            if (diff < 60)    return Math.floor(diff) + '秒前';
+            if (diff < 3600)  return Math.floor(diff/60) + '分前';
+            if (diff < 86400) return Math.floor(diff/3600) + '時間前';
+            return (d.getMonth()+1) + '/' + d.getDate();
+        }
+
+        init();
+    </script>
+</body>
+</html>

@@ -1,152 +1,524 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Koro</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <style>
-        :root { --main-blue: #1da1f2; --bg-gray: #f5f8fa; --text-gray: #657786; }
-        body { font-family: -apple-system, sans-serif; max-width: 600px; margin: auto; padding: 0; background: var(--bg-gray); }
-        .card { background: white; padding: 15px; border-bottom: 1px solid #e1e8ed; }
-        .header { background: white; padding: 15px; position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; z-index: 100; }
-        .post { cursor: pointer; transition: 0.2s; text-decoration: none; color: inherit; display: block; }
-        .post:hover { background: #f9f9f9; }
-        .display-name { font-weight: bold; margin-right: 5px; }
-        .handle { color: var(--text-gray); }
-        textarea { width: 100%; height: 80px; border: 1px solid #e1e8ed; border-radius: 12px; padding: 10px; box-sizing: border-box; resize: none; font-size: 16px; margin-bottom: 10px; }
-        button { background: var(--main-blue); color: white; border: none; padding: 10px 20px; border-radius: 25px; font-weight: bold; cursor: pointer; }
-        .profile-header { background: white; padding: 30px 20px; text-align: center; border-bottom: 1px solid #ddd; }
-    </style>
+    <link rel="stylesheet" href="koro.css">
 </head>
 <body>
 
-    <div class="header">
-        <h1 style="margin:0; font-size:20px; cursor:pointer;" onclick="navigate('/')">Koro</h1>
-        <div id="auth-section"></div>
+    <header class="site-header">
+        <span class="logo">Koro</span>
+        <div class="header-right" id="header-right"></div>
+    </header>
+
+    <div class="feed-wrap">
+        <div id="load-more-msg" class="load-more-msg" style="display:none;">&#x2191; 読み込み中...</div>
+        <div id="feed"></div>
     </div>
 
-    <div id="app-content">
-        </div>
+    <div id="bottom-bar"></div>
 
     <script>
-        const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
-        const SUPABASE_KEY = 'YOUR_ANON_KEY';
-        const supaClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const SUPABASE_URL = 'https://ztdomjtbvhbcoaafkbhv.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
+        const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        let myProfile = null;
+        const PAGE_SIZE = 20;
+        let myProfile   = null;
+        let oldest      = null;
+        let isLoading   = false;
+        let allLoaded   = false;
+        let authStateVersion = 0;
+        const STORAGE_BUCKET = 'koro-media';
+        const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+        let selectedPostImageFile = null;
+        let profileUidCache = {};
 
-        // URLをきれいに保ったまま遷移する関数
-        function navigate(path) {
-            window.history.pushState({}, '', path);
-            router();
+        // テーマ
+        (function applyTheme() {
+            const saved = localStorage.getItem('koro-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', saved);
+        })();
+
+        function toggleTheme() {
+            const cur = document.documentElement.getAttribute('data-theme') || 'light';
+            const next = cur === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('koro-theme', next);
+            updateThemeIcon();
         }
 
-        // URLを見て表示を切り替えるルーター
-        async function router() {
-            const path = window.location.pathname; // "/@hiko" など
-            const app = document.getElementById('app-content');
-            const user = (await supaClient.auth.getUser()).data.user;
+        function updateThemeIcon() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const btn = document.getElementById('theme-toggle');
+            if (!btn) return;
+            btn.innerHTML = isDark ? sunSVG() : moonSVG();
+            btn.title = isDark ? 'ライトモードへ' : 'ダークモードへ';
+        }
 
-            // ログインチェック
-            if (user && !myProfile) {
-                const { data } = await supaClient.from('profiles').select('*').eq('id', user.id).single();
-                if (!data) return showSetup();
-                myProfile = data;
-            }
+        function moonSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Z"/></svg>';
+        }
+        function sunSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Zm326-268Z"/></svg>';
+        }
+        function avatarSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>';
+        }
+        function postAvatarSVG() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>';
+        }
+        function postAvatarError(el) {
+            const p = el.parentElement;
+            if (!p) return;
+            el.remove();
+            p.innerHTML = postAvatarSVG();
+        }
+        async function prefetchProfileUids(posts) {
+            const handles = [...new Set(posts.map(function(p) { return p.author_handle; }).filter(Boolean))];
+            const missing = handles.filter(function(h) { return !profileUidCache[h]; });
+            if (!missing.length) return;
+            const { data } = await supa.from('profiles').select('id, user_handle').in('user_handle', missing);
+            if (data) data.forEach(function(p) { profileUidCache[p.user_handle] = p.id; });
+        }
 
-            // 認証ボタンの更新
-            document.getElementById('auth-section').innerHTML = user ? 
-                `<button onclick="logout()" style="background:#ccc; font-size:12px;">ログアウト</button>` : 
-                `<button onclick="login()">Googleログイン</button>`;
+        // ドロップダウン
+        function toggleDropdown(e) {
+            e.stopPropagation();
+            const dd = document.getElementById('account-dropdown');
+            if (dd) dd.classList.toggle('open');
+        }
+        document.addEventListener('click', () => {
+            const dd = document.getElementById('account-dropdown');
+            if (dd) dd.classList.remove('open');
+        });
 
-            if (path.startsWith('/@')) {
-                const handle = path.replace('/@', '');
-                showProfile(handle);
+        // 初期化
+        async function init() {
+            const { data: { session } } = await supa.auth.getSession();
+            await handleAuthState(session);
+            supa.auth.onAuthStateChange(async (_, nextSession) => {
+                await handleAuthState(nextSession);
+            });
+            await loadPosts('initial');
+            subscribeRealtime();
+        }
+
+        // 認証状態
+        async function handleAuthState(session) {
+            const version = ++authStateVersion;
+            const headerRight = document.getElementById('header-right');
+            if (!headerRight) return;
+
+            const themeBtn = '<button class="icon-btn" id="theme-toggle" onclick="toggleTheme()" title="テーマ切替"></button>';
+
+            if (session) {
+                headerRight.innerHTML = themeBtn +
+                    '<div class="account-wrap">' +
+                    '<button class="account-btn" id="account-btn" onclick="toggleDropdown(event)" title="アカウント"></button>' +
+                    '<div class="account-dropdown" id="account-dropdown">' +
+                    '<a class="dropdown-item" id="dd-profile-link" href="/user/">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>' +
+                    'プロフィール</a>' +
+                    '<a class="dropdown-item" id="dd-edit-link" href="/user/#edit">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M200-200h40l439-439-40-40-439 439v40Zm-40 80v-104l565-565q11-12 26-18t31-6q16 0 31 6t26 17l42 42q11 11 17 26t6 31q0 16-6 31t-18 26L315-120H160Zm600-557-43-43 43 43Zm-114 71-20-20 40 40-20-20Z"/></svg>' +
+                    'プロフィール編集</a>' +
+                    '<button class="dropdown-item danger" onclick="logout()">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h280v80H200Zm440-160-55-58 102-102H360v-80h327L585-622l55-58 200 200-200 200Z"/></svg>' +
+                    'ログアウト</button>' +
+                    '</div></div>';
+
+                // テーマボタン SVG 設定
+                const tBtn = document.getElementById('theme-toggle');
+                if (tBtn) tBtn.innerHTML = moonSVG();
+
+                // アカウントボタン SVG 設定
+                const aBtn = document.getElementById('account-btn');
+                if (aBtn) aBtn.innerHTML = avatarSVG();
+
+                const profile = await loadMyProfile(session.user.id);
+                if (version !== authStateVersion) return;
+
+                if (profile) {
+                    myProfile = profile;
+                    const pLink = document.getElementById('dd-profile-link');
+                    const eLink = document.getElementById('dd-edit-link');
+                    if (pLink) pLink.href = '/user/?@' + profile.user_handle;
+                    if (eLink) eLink.href = '/user/?@' + profile.user_handle + '#edit';
+                    updateAccountAvatar(profile);
+                    renderBottomBar();
+                } else {
+                    myProfile = null;
+                    renderSetupForm();
+                }
             } else {
-                showHome();
+                myProfile = null;
+                headerRight.innerHTML = themeBtn + '<button class="btn" onclick="login()">ログイン</button>';
+                const tBtn = document.getElementById('theme-toggle');
+                if (tBtn) tBtn.innerHTML = moonSVG();
+                renderBottomBar();
+            }
+            updateThemeIcon();
+        }
+
+        function updateAccountAvatar(profile) {
+            const btn = document.getElementById('account-btn');
+            if (!btn) return;
+            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl('profiles/' + profile.id + '/avatar');
+            if (!data || !data.publicUrl) return;
+            const img = new Image();
+            img.src = data.publicUrl + '?v=' + Date.now();
+            img.onerror = function() {};
+            img.onload = function() {
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+                btn.innerHTML = '';
+                btn.appendChild(img);
+            };
+        }
+
+        async function loadMyProfile(uid) {
+            const { data } = await supa.from('profiles').select('*').eq('id', uid).single();
+            return data || null;
+        }
+
+        // 下部バー
+        function renderBottomBar() {
+            const el = document.getElementById('bottom-bar');
+            if (!el) return;
+            if (myProfile) {
+                el.innerHTML =
+                    '<div class="compose-bar">' +
+                    '<div class="compose-main">' +
+                    '<textarea id="post-text" placeholder="いまなにしてる？"></textarea>' +
+                    '<button class="btn" id="post-btn" onclick="post()">ころっと</button>' +
+                    '</div>' +
+                    '<div class="compose-tools">' +
+                    '<label class="compose-img-label" title="画像を追加">' +
+                    '<svg xmlns="http://www.w3.org/2000/svg" height="22px" viewBox="0 -960 960 960" width="22px" fill="currentColor"><path d="M232-172q-26 0-43-17t-17-43v-496q0-26 17-43t43-17h496q26 0 43 17t17 43v496q0 26-17 43t-43 17H232Zm0-60h496v-496H232v496Zm28-76h440L576-480 456-320l-96-128-100 140Zm-28 76v-496 496Z"/></svg>' +
+                    '<input id="post-image-input" type="file" accept="image/*" onchange="onSelectPostImage(event)">' +
+                    '</label>' +
+                    '<span class="selected-file" id="post-image-name"></span>' +
+                    '<button class="tiny-btn" id="post-clear-btn" type="button" onclick="clearPostImage()" style="display:none;">✕ クリア</button>' +
+                    '</div></div>';
+            } else {
+                el.innerHTML =
+                    '<div class="guest-bar">' +
+                    '<span>ログインすると投稿できます</span>' +
+                    '<button class="btn" onclick="login()">ログイン</button>' +
+                    '</div>';
             }
         }
 
-        async function showHome() {
-            const app = document.getElementById('app-content');
-            app.innerHTML = `
-                <div class="card" id="post-box" style="${myProfile ? '' : 'display:none'}">
-                    <textarea id="post-content" placeholder="ころっとする？"></textarea>
-                    <div style="text-align:right;"><button onclick="postKorotto()">ころっと！</button></div>
-                </div>
-                <div id="timeline"></div>
-            `;
-            fetchPosts();
+        function renderSetupForm() {
+            document.body.innerHTML =
+                '<header class="site-header">' +
+                '<span class="logo">Koro</span>' +
+                '<div class="header-right">' +
+                '<button class="icon-btn" onclick="toggleTheme()" id="theme-toggle" title="テーマ切替"></button>' +
+                '</div></header>' +
+                '<div class="setup-wrap"><div class="form-card">' +
+                '<h2>はじめまして 👋</h2>' +
+                '<p>あなたの表示名と ID を決めましょう</p>' +
+                '<label class="field-label">表示名</label>' +
+                '<input class="field" id="new-name" type="text" placeholder="例：私だ。" autocomplete="off">' +
+                '<label class="field-label">ID（英数字・記号なし）</label>' +
+                '<input class="field" id="new-handle" type="text" placeholder="例：watasida" autocomplete="off">' +
+                '<label class="field-label">アイコン画像（任意）</label>' +
+                '<input class="field" id="new-avatar" type="file" accept="image/*">' +
+                '<label class="field-label">ヘッダー画像（任意）</label>' +
+                '<input class="field" id="new-header" type="file" accept="image/*">' +
+                '<p class="hint" style="margin-bottom:16px;">2MB超の画像は自動圧縮されます。</p>' +
+                '<button class="btn" style="width:100%;" onclick="saveProfile()">Koro をはじめる</button>' +
+                '</div></div>';
+            const tBtn = document.getElementById('theme-toggle');
+            if (tBtn) tBtn.innerHTML = moonSVG();
+            updateThemeIcon();
         }
 
-        async function showProfile(handle) {
-            const app = document.getElementById('app-content');
-            const { data: profile } = await supaClient.from('profiles').select('*').eq('user_handle', handle).single();
-            
-            if (!profile) {
-                app.innerHTML = `<div class="card">ユーザーが見つかりません</div>`;
+        function onSelectPostImage(event) {
+            selectedPostImageFile = event.target.files ? event.target.files[0] : null;
+            const name = document.getElementById('post-image-name');
+            const clearBtn = document.getElementById('post-clear-btn');
+            if (name) name.textContent = selectedPostImageFile ? selectedPostImageFile.name : '';
+            if (clearBtn) clearBtn.style.display = selectedPostImageFile ? '' : 'none';
+        }
+
+        function clearPostImage() {
+            selectedPostImageFile = null;
+            const input = document.getElementById('post-image-input');
+            const name = document.getElementById('post-image-name');
+            const clearBtn = document.getElementById('post-clear-btn');
+            if (input) input.value = '';
+            if (name) name.textContent = '';
+            if (clearBtn) clearBtn.style.display = 'none';
+        }
+
+        // 投稿ロード
+        async function loadPosts(mode) {
+            mode = mode || 'older';
+            if (isLoading || allLoaded) return;
+            isLoading = true;
+
+            const msg = document.getElementById('load-more-msg');
+            if (mode !== 'initial') msg.style.display = 'block';
+
+            let query = supa.from('posts').select('*')
+                            .order('created_at', { ascending: false })
+                            .limit(PAGE_SIZE);
+            if (mode === 'older' && oldest) query = query.lt('created_at', oldest);
+
+            const { data, error } = await query;
+            msg.style.display = 'none';
+            isLoading = false;
+
+            if (error || !data || data.length === 0) {
+                if (mode !== 'initial') allLoaded = true;
+                if (mode === 'initial') {
+                    document.getElementById('feed').innerHTML =
+                        '<div class="load-more-msg">まだ投稿がありません。最初のころっとをどうぞ！</div>';
+                }
                 return;
             }
 
-            app.innerHTML = `
-                <div class="profile-header">
-                    <h2 style="margin:0;">${profile.display_name}</h2>
-                    <div class="handle">@${profile.user_handle}</div>
-                </div>
-                <div id="user-posts"></div>
-            `;
-            fetchPosts(profile.id, 'user-posts');
+            if (data.length < PAGE_SIZE) allLoaded = true;
+            oldest = data[data.length - 1].created_at;
+
+            await prefetchProfileUids(data);
+
+            const feed = document.getElementById('feed');
+            if (mode === 'initial') {
+                feed.innerHTML = data.map(function(p) { return postHTML(p); }).join('');
+                scrollToBottom();
+            } else {
+                var prevH  = document.documentElement.scrollHeight;
+                var prevSy = window.scrollY;
+                data.forEach(function(p) {
+                    var div = document.createElement('div');
+                    div.innerHTML = postHTML(p);
+                    feed.appendChild(div.firstElementChild);
+                });
+                window.scrollTo(0, prevSy + document.documentElement.scrollHeight - prevH);
+            }
         }
 
-        function showSetup() {
-            document.getElementById('app-content').innerHTML = `
-                <div class="card" style="text-align:center; padding:40px;">
-                    <h2>Koroへようこそ</h2>
-                    <input type="text" id="s-name" placeholder="名前" style="width:100%; padding:10px; margin:10px 0;">
-                    <input type="text" id="s-handle" placeholder="ユーザーID" style="width:100%; padding:10px; margin:10px 0;">
-                    <button onclick="saveProfile()">開始</button>
-                </div>
-            `;
+        // リアルタイム
+        function subscribeRealtime() {
+            supa.channel('posts-rt')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, function(payload) {
+                    prependPost(payload.new);
+                })
+                .subscribe();
         }
 
-        async function postKorotto() {
-            const content = document.getElementById('post-content').value;
-            if (!content) return;
-            await supaClient.from('posts').insert([{ 
-                content, author_id: myProfile.id, author_name: myProfile.display_name, author_handle: myProfile.user_handle 
-            }]);
-            document.getElementById('post-content').value = '';
-            fetchPosts();
+        async function prependPost(post) {
+            if (post.id && document.querySelector('[data-post-id="' + post.id + '"]')) return;
+            if (!post.id) {
+                var key = (post.author_handle || '') + '::' + (post.content || '');
+                if (document.querySelector('[data-post-key="' + escAttr(key) + '"]')) return;
+            }
+            await prefetchProfileUids([post]);
+            var feed = document.getElementById('feed');
+            var atBottom = (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 60;
+            var div = document.createElement('div');
+            div.innerHTML = postHTML(post);
+            feed.prepend(div.firstElementChild);
+            if (atBottom) scrollToBottom();
+            
+            var audio = new Audio('oto.mp3');
+            audio.play().catch(function(err) {});
         }
 
-        async function fetchPosts(uid = null, target = 'timeline') {
-            let q = supaClient.from('posts').select('*').order('created_at', { ascending: false });
-            if (uid) q = q.eq('author_id', uid);
-            const { data } = await q;
-            document.getElementById(target).innerHTML = data.map(p => `
-                <div class="card post" onclick="event.preventDefault(); navigate('/@${p.author_handle}')">
-                    <span class="display-name">${p.author_name}</span>
-                    <span class="handle">@${p.author_handle}</span>
-                    <div style="margin-top:8px;">${p.content}</div>
-                </div>
-            `).join('');
+        function scrollToBottom() {
+            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
+        }
+
+        // 投稿HTMLテンプレート
+        function splitPostContent(rawContent) {
+            var content = String(rawContent || '');
+            var match = content.match(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/);
+            if (!match) return { text: content, imageUrl: '' };
+            var text = content.replace(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/, '').trim();
+            return { text: text, imageUrl: match[1] };
+        }
+
+        function postHTML(p) {
+            var key = (p.author_handle || '') + '::' + (p.content || '');
+            var parsed = splitPostContent(p.content);
+            var imgHtml = parsed.imageUrl
+                ? '<div class="post-image"><img src="' + escAttr(parsed.imageUrl) + '" alt="post image" loading="lazy"></div>'
+                : '';
+            var uid = profileUidCache[p.author_handle] || '';
+            var avatarSrc = uid ? (SUPABASE_URL + '/storage/v1/object/public/' + STORAGE_BUCKET + '/profiles/' + uid + '/avatar' + '?v=' + Date.now()) : '';
+            var avImg = avatarSrc
+                ? '<img src="' + escAttr(avatarSrc) + '" alt="" loading="lazy" onerror="postAvatarError(this)">'
+                : postAvatarSVG();
+            return '<div class="post-item"' +
+                (p.id ? ' data-post-id="' + p.id + '"' : '') +
+                ' data-post-key="' + escAttr(key) + '">' +
+                '<div class="post-row">' +
+                '<a href="/user/?@' + (p.author_handle || '') + '" class="post-avatar-sm">' + avImg + '</a>' +
+                '<div class="post-row-content">' +
+                '<div class="post-meta">' +
+                '<a href="/user/?@' + (p.author_handle || '') + '" style="display:flex;align-items:baseline;gap:4px;">' +
+                '<span class="post-name">' + esc(p.author || 'ななし') + '</span>' +
+                '<span class="post-handle">@' + esc(p.author_handle || 'none') + '</span>' +
+                '</a>' +
+                '<span class="post-time">' + fmtDate(p.created_at) + '</span>' +
+                '</div>' +
+                '<div class="post-body">' + esc(parsed.text) + '</div>' +
+                imgHtml +
+                '</div>' +
+                '</div>' +
+                '</div>';
+        }
+
+        // アクション
+        async function post() {
+            var ta  = document.getElementById('post-text');
+            var btn = document.getElementById('post-btn');
+            var text = ta.value.trim();
+            if ((!text && !selectedPostImageFile) || !myProfile) return;
+            btn.disabled = true;
+
+            var imageUrl = '';
+            if (selectedPostImageFile) {
+                try {
+                    var uploadPath = 'posts/' + myProfile.id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2);
+                    imageUrl = await uploadImageToStorage(selectedPostImageFile, uploadPath);
+                } catch (err) {
+                    alert('画像アップロードに失敗しました: ' + (err && err.message ? err.message : err));
+                    btn.disabled = false;
+                    return;
+                }
+            }
+
+            var mergedContent = imageUrl
+                ? text + (text ? '\n\n' : '') + '[img]' + imageUrl + '[/img]'
+                : text;
+
+            var newPost = {
+                content:       mergedContent,
+                author:        myProfile.display_name,
+                author_handle: myProfile.user_handle,
+                created_at:    new Date().toISOString()
+            };
+            var { error } = await supa.from('posts').insert([newPost]);
+
+            if (error) {
+                alert('投稿に失敗しました: ' + error.message);
+                btn.disabled = false;
+                return;
+            }
+
+            btn.disabled = false;
+            ta.value = '';
+            clearPostImage();
+            prependPost(newPost);
         }
 
         async function login() {
-            await supaClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+            await supa.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
         }
-        async function logout() { await supaClient.auth.signOut(); location.reload(); }
-        async function saveProfile() {
-            const user = (await supaClient.auth.getUser()).data.user;
-            const name = document.getElementById('s-name').value;
-            const handle = document.getElementById('s-handle').value;
-            await supaClient.from('profiles').insert([{ id: user.id, display_name: name, user_handle: handle }]);
-            location.reload();
+        async function logout() {
+            try { await supa.auth.signOut(); } catch(e) {}
+            location.href = location.origin + location.pathname;
         }
 
-        window.onpopstate = router;
-        router();
+        async function saveProfile() {
+            var name   = document.getElementById('new-name').value.trim();
+            var handle = document.getElementById('new-handle').value.trim();
+            if (!name || !handle) return alert('入力してください');
+            var { data: { user } } = await supa.auth.getUser();
+
+            var setupAvatar = document.getElementById('new-avatar') && document.getElementById('new-avatar').files[0] || null;
+            var setupHeader = document.getElementById('new-header') && document.getElementById('new-header').files[0] || null;
+
+            try {
+                if (setupAvatar) await uploadImageToStorage(setupAvatar, 'profiles/' + user.id + '/avatar');
+                if (setupHeader) await uploadImageToStorage(setupHeader, 'profiles/' + user.id + '/header');
+            } catch (err) {
+                alert('プロフィール画像のアップロードに失敗しました: ' + (err && err.message ? err.message : err));
+                return;
+            }
+
+            var { error } = await supa.from('profiles').insert([{ id: user.id, display_name: name, user_handle: handle }]);
+            if (error) alert('エラー: ' + error.message);
+            else location.reload();
+        }
+
+        // スクロールで過去ロード
+        window.addEventListener('scroll', function() {
+            if (window.scrollY < 120 && !isLoading && !allLoaded) loadPosts('older');
+        });
+
+        // 画像圧縮
+        async function compressImageIfNeeded(file) {
+            if (!(file instanceof File)) return file;
+            if (file.size <= MAX_IMAGE_BYTES) return file;
+
+            var bitmap = await createImageBitmap(file);
+            var width = bitmap.width;
+            var height = bitmap.height;
+            var maxSide = 1920;
+            if (Math.max(width, height) > maxSide) {
+                var ratio = maxSide / Math.max(width, height);
+                width = Math.round(width * ratio);
+                height = Math.round(height * ratio);
+            }
+            var canvas = document.createElement('canvas');
+            var ctx = canvas.getContext('2d');
+            canvas.width = width; canvas.height = height;
+            ctx.drawImage(bitmap, 0, 0, width, height);
+
+            var quality = 0.9;
+            var blob = null;
+            for (var i = 0; i < 8; i++) {
+                blob = await new Promise(function(resolve) { canvas.toBlob(resolve, 'image/jpeg', quality); });
+                if (!blob || blob.size <= MAX_IMAGE_BYTES) break;
+                quality -= 0.1;
+                if (quality < 0.35) {
+                    var nW = Math.max(600, Math.round(canvas.width * 0.9));
+                    var nH = Math.max(600, Math.round(canvas.height * 0.9));
+                    var tmp = document.createElement('canvas');
+                    tmp.width = nW; tmp.height = nH;
+                    tmp.getContext('2d').drawImage(canvas, 0, 0, nW, nH);
+                    canvas.width = nW; canvas.height = nH;
+                    ctx.clearRect(0, 0, nW, nH); ctx.drawImage(tmp, 0, 0);
+                    quality = 0.8;
+                }
+            }
+            if (!blob) return file;
+            return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+        }
+
+        async function uploadImageToStorage(file, path) {
+            var optimized = await compressImageIfNeeded(file);
+            var { error } = await supa.storage.from(STORAGE_BUCKET).upload(path, optimized, {
+                upsert: true, contentType: optimized.type || 'image/jpeg'
+            });
+            if (error) throw error;
+            var { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+            return data.publicUrl + '?v=' + Date.now();
+        }
+
+        // ユーティリティ
+        function esc(s) {
+            return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+        function escAttr(s) { return esc(s).replace(/'/g, '&#39;'); }
+        function fmtDate(iso) {
+            if (!iso) return '';
+            var d = new Date(iso), now = new Date(), diff = (now - d) / 1000;
+            if (diff < 60)    return Math.floor(diff) + '秒前';
+            if (diff < 3600)  return Math.floor(diff/60) + '分前';
+            if (diff < 86400) return Math.floor(diff/3600) + '時間前';
+            return (d.getMonth()+1) + '/' + d.getDate();
+        }
+
+        init();
     </script>
 </body>
 </html>
