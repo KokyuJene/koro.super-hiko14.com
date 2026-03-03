@@ -1,424 +1,310 @@
 ﻿<!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>プロフィール - Koro</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <link rel="stylesheet" href="/koro.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>プロフィール - Koro</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="..\koro.css">
 </head>
 <body>
+<header class="site-header">
+ <a href="/" class="logo">Koro</a>
+ <div class="header-right" id="header-right"></div>
+</header>
+<div id="profile-area" class="profile-wrap">
+ <div class="load-more-msg">読み込み中...</div>
+</div>
 
-    <header class="site-header">
-        <a href="/" class="logo">Koro</a>
-        <div class="header-right" id="header-right"></div>
-    </header>
+<script>
+var SB_URL='https://ztdomjtbvhbcoaafkbhv.supabase.co';
+var SB_KEY='sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
+var supa=supabase.createClient(SB_URL,SB_KEY);
+var BUCKET='koro-media',MAX_IMG=2*1024*1024;
+var mySession=null,myHandle=null,myUid=null;
+var editAvFile=null,editHdFile=null;
+var viewProfile=null,likeCache={},myLikes={};
 
-    <div id="profile-area" class="profile-wrap">
-        <div class="load-more-msg">読み込み中...</div>
-    </div>
+/* ── theme ── */
+(function(){document.documentElement.setAttribute('data-theme',localStorage.getItem('koro-theme')||'light')})();
+function toggleTheme(){var n=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('koro-theme',n);updateThemeIcon()}
+function updateThemeIcon(){var d=document.documentElement.getAttribute('data-theme')==='dark';var b=document.getElementById('theme-toggle');if(!b)return;b.innerHTML=d?sunI():moonI();b.title=d?'Light mode':'Dark mode'}
 
-    <script>
-        const SUPABASE_URL = 'https://ztdomjtbvhbcoaafkbhv.supabase.co';
-        const SUPABASE_KEY = 'sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
-        const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-        const STORAGE_BUCKET = 'koro-media';
-        const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+/* ── svg ── */
+function moonI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor"><path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Z"/></svg>'}
+function sunI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor"><path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Zm326-268Z"/></svg>'}
+function avI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>'}
+function pencilI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentColor"><path d="M200-200h40l439-439-40-40-439 439v40Zm-40 80v-104l565-565q11-12 26-18t31-6q16 0 31 6t26 17l42 42q11 11 17 26t6 31q0 16-6 31t-18 26L315-120H160Z"/></svg>'}
+function imgI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M232-172q-26 0-43-17t-17-43v-496q0-26 17-43t43-17h496q26 0 43 17t17 43v496q0 26-17 43t-43 17H232Zm0-60h496v-496H232v496Zm28-76h440L576-480 456-320l-96-128-100 140Zm-28 76v-496 496Z"/></svg>'}
+function heartI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Z"/></svg>'}
+function heartOI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Zm0-108q96-86 158-147.5t98-107q36-45.5 50-81t14-70.5q0-60-40-100t-100-40q-47 0-87 26.5T480-640q-33-48-73.5-74T320-740q-60 0-100 40t-40 100q0 35 14 70.5t50 81q36 45.5 98 107T480-228Zm0-273Z"/></svg>'}
+function trashI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>'}
+function avErr(el){var p=el.parentElement;if(!p)return;el.remove();p.innerHTML=avI()}
+function postItemClick(pid,ev){if(ev&&ev.target&&ev.target.closest('button,a,label'))return;location.href='/post/?id='+pid}
+function replyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M132-180v-588q0-26 17-43t43-17h576q26 0 43 17t17 43v416q0 26-17 43t-43 17H244L132-180Zm100-140h536q12 0 22-10t10-22v-416q0-12-10-22t-22-10H192q-12 0-22 10t-10 22v520l72-72Zm-72 0v-480 480Z"/></svg>'}
+function repostI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M296-132 172-256l124-124 20 20-90 90h470v-160h28v188H226l90 90-20 20Zm-60-398v-188h498l-90-90 20-20 124 124-124 124-20-20 90-90H264v160h-28Z"/></svg>'}
 
-        let mySession = null;
-        let myHandle  = null;
-        let editAvatarFile = null;
-        let editHeaderFile = null;
+/* ── dropdown ── */
+function toggleDD(e){e.stopPropagation();var d=document.getElementById('account-dropdown');if(d)d.classList.toggle('open')}
+document.addEventListener('click',function(){var d=document.getElementById('account-dropdown');if(d)d.classList.remove('open')});
 
-        // テーマ
-        (function applyTheme() {
-            const saved = localStorage.getItem('koro-theme') || 'light';
-            document.documentElement.setAttribute('data-theme', saved);
-        })();
+/* ── url ── */
+function getHandle(){
+ var s=location.search.slice(1);if(!s)return null;
+ var p=new URLSearchParams(s);if(p.has('handle'))return p.get('handle').replace(/^@/,'');
+ var fk=Array.from(p.keys())[0]||'';
+ return fk.startsWith('@')?fk.slice(1):(fk||null);
+}
 
-        function toggleTheme() {
-            const cur = document.documentElement.getAttribute('data-theme') || 'light';
-            const next = cur === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', next);
-            localStorage.setItem('koro-theme', next);
-            updateThemeIcon();
-        }
+/* ── init ── */
+async function init(){
+ var s=(await supa.auth.getSession()).data.session;mySession=s;
+ if(s){myUid=s.user.id;var r=await supa.from('profiles').select('user_handle').eq('id',s.user.id).single();myHandle=r.data?r.data.user_handle:null}
+ renderHeader(s);
+ var handle=getHandle();
+ if(!handle){showNF('URLにハンドルが指定されていません');return}
+ await loadProfile(handle);
+ if(location.hash==='#edit'){var ep=document.getElementById('edit-panel');if(ep){ep.classList.add('open');setTimeout(function(){ep.scrollIntoView({behavior:'smooth'})},200)}}
+}
 
-        function updateThemeIcon() {
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            const btn = document.getElementById('theme-toggle');
-            if (!btn) return;
-            btn.innerHTML = isDark ? sunSVG() : moonSVG();
-            btn.title = isDark ? 'ライトモードへ' : 'ダークモードへ';
-        }
+function renderHeader(session){
+ var hr=document.getElementById('header-right');
+ var tb='<button class="icon-btn" id="theme-toggle" onclick="toggleTheme()"></button>';
+ if(session){
+  var ph=myHandle?('/user/?@'+myHandle):'/user/';
+  var eh=myHandle?('/user/?@'+myHandle+'#edit'):'/user/#edit';
+  hr.innerHTML=tb+
+   '<div class="account-wrap">'+
+   '<button class="account-btn" id="account-btn" onclick="toggleDD(event)"></button>'+
+   '<div class="account-dropdown" id="account-dropdown">'+
+   '<a class="dropdown-item" href="'+esc(ph)+'">'+avI()+'プロフィール</a>'+
+   '<a class="dropdown-item" href="'+esc(eh)+'">'+pencilI()+'プロフィール編集</a>'+
+   '<button class="dropdown-item danger" onclick="supa.auth.signOut().then(function(){location.href=\'/\'})"><svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h280v80H200Zm440-160-55-58 102-102H360v-80h327L585-622l55-58 200 200-200 200Z"/></svg>ログアウト</button>'+
+   '</div></div>';
+  var a=document.getElementById('account-btn');if(a)a.innerHTML=avI();
+  updateAccAvatar(session.user.id);
+ }else{
+  hr.innerHTML=tb+'<a href="/"><button class="btn">ログイン</button></a>';
+ }
+ updateThemeIcon();
+}
 
-        function moonSVG() {
-            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Z"/></svg>';
-        }
-        function sunSVG() {
-            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Zm326-268Z"/></svg>';
-        }
-        function avatarSVG() {
-            return '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>';
-        }
-        function pencilSVG() {
-            return '<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor"><path d="M200-200h40l439-439-40-40-439 439v40Zm-40 80v-104l565-565q11-12 26-18t31-6q16 0 31 6t26 17l42 42q11 11 17 26t6 31q0 16-6 31t-18 26L315-120H160Zm600-557-43-43 43 43Zm-114 71-20-20 40 40-20-20Z"/></svg>';
-        }
-        function imgSVG() {
-            return '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M232-172q-26 0-43-17t-17-43v-496q0-26 17-43t43-17h496q26 0 43 17t17 43v496q0 26-17 43t-43 17H232Zm0-60h496v-496H232v496Zm28-76h440L576-480 456-320l-96-128-100 140Zm-28 76v-496 496Z"/></svg>';
-        }
-        function onAvatarError(el) {
-            const parent = el.parentElement;
-            if (!parent) return;
-            el.remove();
-            parent.innerHTML = avatarSVG();
-        }
-        function postAvatarError(el) {
-            const p = el.parentElement;
-            if (!p) return;
-            el.remove();
-            p.innerHTML = avatarSVG();
-        }
+function updateAccAvatar(uid){
+ var b=document.getElementById('account-btn');if(!b)return;
+ var d=supa.storage.from(BUCKET).getPublicUrl('profiles/'+uid+'/avatar');
+ if(!d.data||!d.data.publicUrl)return;
+ var im=new Image();im.src=d.data.publicUrl+'?v='+Date.now();
+ im.onerror=function(){};
+ im.onload=function(){im.style.cssText='width:100%;height:100%;object-fit:cover;border-radius:50%';b.innerHTML='';b.appendChild(im)};
+}
 
-        // ドロップダウン
-        function toggleDropdown(e) {
-            e.stopPropagation();
-            const dd = document.getElementById('account-dropdown');
-            if (dd) dd.classList.toggle('open');
-        }
-        document.addEventListener('click', function() {
-            const dd = document.getElementById('account-dropdown');
-            if (dd) dd.classList.remove('open');
-        });
+/* ── load profile ── */
+async function loadProfile(handle){
+ var r=await supa.from('profiles').select('*').eq('user_handle',handle).single();
+ if(r.error||!r.data){showNF('@'+handle+' は見つかりませんでした');return}
+ var prof=r.data;viewProfile=prof;
+ document.title=prof.display_name+' (@'+prof.user_handle+') - Koro';
+ var pc=(await supa.from('posts').select('*',{count:'exact',head:true}).eq('author_handle',handle)).count||0;
+ var fersR=await supa.from('follows').select('*',{count:'exact',head:true}).eq('following_id',prof.id);
+ var fingR=await supa.from('follows').select('*',{count:'exact',head:true}).eq('follower_id',prof.id);
+ var fersCount=fersR.count||0;var fingCount=fingR.count||0;
+ var isOwn=myHandle&&myHandle===prof.user_handle;
+ var isFollowing=false;
+ if(myUid&&!isOwn){try{var fr=await supa.from('follows').select('id').eq('follower_id',myUid).eq('following_id',prof.id).single();isFollowing=!!(fr.data)}catch(e){}}
+ var avUrl=getStorUrl('profiles/'+prof.id+'/avatar');
+ var hdUrl=getStorUrl('profiles/'+prof.id+'/header');
+ var actionBtn='';
+ if(isOwn){
+  actionBtn='<button class="profile-edit-btn" title="プロフィール編集" onclick="toggleEdit()">'+pencilI()+'</button>';
+ }else if(myUid){
+  if(isFollowing){actionBtn='<button class="follow-btn following" id="follow-btn" onclick="toggleFollow(\''+esc(prof.id)+'\')"><span class="ftxt">フォロー中</span><span class="ftxt-h">フォロー解除</span></button>'}
+  else{actionBtn='<button class="follow-btn" id="follow-btn" onclick="toggleFollow(\''+esc(prof.id)+'\')">フォロー</button>'}
+ }
+ var editPanel=isOwn?
+  '<div class="profile-edit-panel" id="edit-panel">'+
+  '<label class="field-label">表示名</label>'+
+  '<input class="field" id="edit-name" type="text" value="'+esc(prof.display_name)+'" placeholder="表示名">'+
+  '<label class="field-label">アイコン画像</label>'+
+  '<div class="edit-img-row"><label class="edit-img-label">'+imgI()+'アイコン選択<input type="file" accept="image/*" onchange="onSelAv(event)"></label><span id="edit-av-nm" class="hint"></span></div>'+
+  '<label class="field-label">ヘッダー画像</label>'+
+  '<div class="edit-img-row"><label class="edit-img-label">'+imgI()+'ヘッダー選択<input type="file" accept="image/*" onchange="onSelHd(event)"></label><span id="edit-hd-nm" class="hint"></span></div>'+
+  '<p class="hint">2MB超は自動圧縮されます。</p>'+
+  '<button class="btn" style="margin-top:14px;width:100%" onclick="saveEdit(\''+esc(prof.id)+'\')">保存する</button></div>':'';
+ document.getElementById('profile-area').innerHTML=
+  '<div class="profile-card">'+
+  '<div class="profile-banner"><img class="profile-banner-img" src="'+esc(hdUrl)+'" loading="lazy" onerror="this.style.display=\'none\'"></div>'+
+  '<div class="profile-body">'+
+  '<div class="profile-top-row">'+
+  '<div class="profile-avatar"><img class="profile-avatar-img" src="'+esc(avUrl)+'" loading="lazy" onerror="avErr(this)"></div>'+
+  actionBtn+
+  '</div>'+
+  '<div class="profile-info">'+
+  '<div class="profile-name">'+esc(prof.display_name)+'</div>'+
+  '<div class="profile-handle">@'+esc(prof.user_handle)+'</div>'+
+  (prof.bio?'<div class="profile-bio">'+esc(prof.bio)+'</div>':'')+
+  '</div>'+
+  '<div class="profile-stats">'+
+  '<span class="profile-stat"><b>'+pc+'</b> ころっと</span>'+
+  '<span class="profile-stat"><b>'+fingCount+'</b> フォロー</span>'+
+  '<span class="profile-stat follow-stat-fers"><b>'+fersCount+'</b> フォロワー</span>'+
+  '</div></div>'+editPanel+'</div>'+
+  '<div class="posts-list" id="posts-list">'+
+  '<div class="section-label">ころっと</div>'+
+  '<div id="user-timeline"><div class="load-more-msg">読み込み中...</div></div></div>';
+ await loadUserPosts(handle,prof.id);
+ /* プロフカードをスキップして投稿を表示 */
+ requestAnimationFrame(function(){
+  var pl=document.getElementById('posts-list');
+  if(pl)pl.scrollIntoView({behavior:'smooth',block:'start'});
+ });
+}
 
-        // URLから @handle 取得
-        function getHandleFromURL() {
-            const search = location.search.slice(1);
-            if (!search) return null;
-            const params = new URLSearchParams(search);
-            if (params.has('handle')) return params.get('handle').replace(/^@/, '');
-            const firstKey = Array.from(params.keys())[0] || '';
-            if (firstKey.startsWith('@')) return firstKey.slice(1);
-            if (firstKey) return firstKey;
-            return null;
-        }
+/* ── follow ── */
+async function toggleFollow(targetId){
+ if(!myUid)return;
+ var btn=document.getElementById('follow-btn');if(!btn)return;
+ btn.disabled=true;
+ try{
+  if(btn.classList.contains('following')){
+   var r=await supa.from('follows').delete().eq('follower_id',myUid).eq('following_id',targetId);
+   if(r.error)throw r.error;
+   btn.className='follow-btn';btn.innerHTML='フォロー';
+  }else{
+   var r=await supa.from('follows').insert([{follower_id:myUid,following_id:targetId}]);
+   if(r.error)throw r.error;
+   btn.className='follow-btn following';btn.innerHTML='<span class="ftxt">フォロー中</span><span class="ftxt-h">フォロー解除</span>';
+  }
+  var fc=await supa.from('follows').select('*',{count:'exact',head:true}).eq('following_id',targetId);
+  var stat=document.querySelector('.follow-stat-fers');
+  if(stat)stat.innerHTML='<b>'+(fc.count||0)+'</b> フォロワー';
+ }catch(e){alert('エラー: '+(e&&e.message?e.message:e))}
+ btn.disabled=false;
+}
 
-        // 初期化
-        async function init() {
-            const { data: { session } } = await supa.auth.getSession();
-            mySession = session;
+/* ── edit ── */
+function toggleEdit(){var p=document.getElementById('edit-panel');if(p)p.classList.toggle('open')}
+function onSelAv(e){editAvFile=e.target.files?e.target.files[0]:null;var s=document.getElementById('edit-av-nm');if(s)s.textContent=editAvFile?editAvFile.name:''}
+function onSelHd(e){editHdFile=e.target.files?e.target.files[0]:null;var s=document.getElementById('edit-hd-nm');if(s)s.textContent=editHdFile?editHdFile.name:''}
+async function saveEdit(uid){
+ var nm=document.getElementById('edit-name').value.trim();
+ if(!nm)return alert('表示名を入力してください');
+ var btn=document.querySelector('#edit-panel .btn');if(btn)btn.disabled=true;
+ try{
+  if(editAvFile)await uploadImg(editAvFile,'profiles/'+uid+'/avatar');
+  if(editHdFile)await uploadImg(editHdFile,'profiles/'+uid+'/header');
+  var r=await supa.from('profiles').update({display_name:nm}).eq('id',uid);
+  if(r.error)throw r.error;
+  editAvFile=null;editHdFile=null;alert('プロフィールを更新しました');location.reload();
+ }catch(err){alert('更新に失敗しました: '+(err&&err.message?err.message:err));if(btn)btn.disabled=false}
+}
 
-            if (session) {
-                const { data: myProfile } = await supa.from('profiles').select('user_handle').eq('id', session.user.id).single();
-                myHandle = myProfile ? myProfile.user_handle : null;
-            }
+/* ── like (bug fixed: error handling + revert) ── */
+async function fetchLikes(ids){
+ if(!ids.length)return;
+ try{
+  var r=await supa.from('likes').select('post_id,user_id').in('post_id',ids.map(String));
+  if(!r.data)return;
+  r.data.forEach(function(l){likeCache[l.post_id]=(likeCache[l.post_id]||0)+1;if(myUid&&l.user_id===myUid)myLikes[l.post_id]=true});
+ }catch(e){console.error('fetchLikes:',e)}
+}
+async function togLike(pid){
+ if(!myUid){alert('ログインしてください');return}
+ var el=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
+ var ce=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+ var ic=document.querySelector('[data-post-id="'+pid+'"] .like-icon');
+ if(!el)return;
+ var wasLiked=!!myLikes[pid];
+ if(wasLiked){delete myLikes[pid];likeCache[pid]=Math.max(0,(likeCache[pid]||0)-1)}
+ else{myLikes[pid]=true;likeCache[pid]=(likeCache[pid]||0)+1}
+ el.classList.toggle('liked',!!myLikes[pid]);
+ if(ic)ic.innerHTML=myLikes[pid]?heartI():heartOI();
+ if(ce)ce.textContent=likeCache[pid]||'';
+ try{
+  var r;
+  if(wasLiked){r=await supa.from('likes').delete().eq('user_id',myUid).eq('post_id',String(pid))}
+  else{r=await supa.from('likes').insert([{user_id:myUid,post_id:String(pid)}])}
+  if(r&&r.error)throw r.error;
+ }catch(err){
+  console.error('like error:',err);
+  alert('いいねの保存に失敗しました。\nSupabaseのlikesテーブルが作成されているか確認してください。\n'+((err&&err.message)||err));
+  if(wasLiked){myLikes[pid]=true;likeCache[pid]=(likeCache[pid]||0)+1}
+  else{delete myLikes[pid];likeCache[pid]=Math.max(0,(likeCache[pid]||0)-1)}
+  el.classList.toggle('liked',!!myLikes[pid]);
+  if(ic)ic.innerHTML=myLikes[pid]?heartI():heartOI();
+  if(ce)ce.textContent=likeCache[pid]||'';
+ }
+}
+async function delPost(pid){
+ if(!confirm('この投稿を削除しますか？'))return;
+ try{var r=await supa.from('posts').delete().eq('id',pid);if(r.error)throw r.error;var el=document.querySelector('[data-post-id="'+pid+'"]');if(el){el.style.transition='opacity .3s';el.style.opacity='0';setTimeout(function(){el.remove()},320)}}
+ catch(err){alert('削除に失敗しました: '+(err.message||err))}
+}
 
-            renderHeader(session);
+/* ── user posts ── */
+async function loadUserPosts(handle,profId){
+ var r=await supa.from('posts').select('*').eq('author_handle',handle).order('created_at',{ascending:false});
+ var tl=document.getElementById('user-timeline');
+ if(r.error){tl.innerHTML='<div class="load-more-msg">読み込みエラー</div>';return}
+ if(!r.data||!r.data.length){tl.innerHTML='<div class="load-more-msg">まだころっとがありません</div>';return}
+ var ids=r.data.map(function(p){return p.id}).filter(Boolean);
+ await fetchLikes(ids);
+ var avSrc=profId?(supa.storage.from(BUCKET).getPublicUrl('profiles/'+profId+'/avatar').data.publicUrl+'?v='+Date.now()):'';
+ tl.innerHTML=r.data.map(function(p){
+  var pa=splitContent(p.content);
+  var imgH=pa.img?'<div class="post-image"><img src="'+esc(pa.img)+'" loading="lazy"></div>':'';
+  var avH=avSrc?'<img src="'+esc(avSrc)+'" loading="lazy" onerror="avErr(this)">':avI();
+  var liked=p.id&&myLikes[p.id];var lc=p.id?(likeCache[p.id]||0):0;
+  var isOwn=myHandle&&myHandle===p.author_handle;
+  var delH=isOwn&&p.id?'<button class="action-btn delete-btn" onclick="delPost(\''+esc(p.id)+'\')">'+ trashI()+'</button>':'';
+  var likeH=p.id?'<button class="action-btn like-btn'+(liked?' liked':'')+' " onclick="togLike(\''+esc(p.id)+'\')" ><span class="like-icon">'+(liked?heartI():heartOI())+'</span><span class="like-count">'+(lc||'')+'</span></button>':'';
+  var replyH=p.id?('<a class="action-btn reply-btn" href="/post/?id='+esc(p.id)+'">'+replyI()+'</a>'):'';
+  var qpa=p.repost_of?splitContent(p.repost_content||''):null;
+  var quoteImgH=qpa&&qpa.img?'<div class="post-image" style="margin-top:6px"><img src="'+esc(qpa.img)+'" loading="lazy"></div>':'';
+  var quoteH=p.repost_of?('<div class="repost-quote"><div class="repost-quote-meta"><b>'+esc(p.repost_author||'')+'</b> @'+esc(p.repost_handle||'')+'</div><div class="repost-quote-body">'+autoLink(esc(qpa?qpa.text||'':''))+'</div>'+quoteImgH+'</div>'):'';
+  var recoroLabel=p.repost_of?'<div class="recoro-label">'+repostI()+' リコロ</div>':'';
+  return '<div class="post-item"'+(p.id?' data-post-id="'+esc(p.id)+'"':'')+
+   (p.repost_of?' style="border-left:3px solid #00ba7c"':'')+
+   (p.id?' onclick="postItemClick(\''+esc(p.id)+'\',event)"':'')+'>'+
+   recoroLabel+
+   '<div class="post-row">'+
+   '<a href="/user/?@'+esc(p.author_handle||'')+'" class="post-avatar-sm">'+avH+'</a>'+
+   '<div class="post-row-content">'+
+   '<div class="post-meta">'+
+   '<span class="post-name">'+esc(p.author||'ななし')+'</span>'+
+   '<span class="post-handle">@'+esc(p.author_handle||'none')+'</span>'+
+   '<span class="post-time" title="'+(p.created_at||'')+'">'+fmtD(p.created_at)+'</span>'+
+   '</div>'+(pa.text?'<div class="post-body">'+autoLink(esc(pa.text))+'</div>':'')+quoteH+imgH+
+   '<div class="post-actions">'+replyH+likeH+delH+'</div>'+
+   '</div></div></div>';
+ }).join('');
+}
 
-            const handle = getHandleFromURL();
-            if (!handle) {
-                showNotFound('URLにハンドルが指定されていません');
-                return;
-            }
+/* ── image ── */
+async function compressImg(file){
+ if(!(file instanceof File)||file.size<=MAX_IMG)return file;
+ var bm=await createImageBitmap(file);var w=bm.width,h=bm.height;
+ if(Math.max(w,h)>1920){var rat=1920/Math.max(w,h);w=Math.round(w*rat);h=Math.round(h*rat)}
+ var cv=document.createElement('canvas');cv.width=w;cv.height=h;var cx=cv.getContext('2d');cx.drawImage(bm,0,0,w,h);
+ var q=0.9,bl=null;
+ for(var i=0;i<8;i++){bl=await new Promise(function(res){cv.toBlob(res,'image/jpeg',q)});if(!bl||bl.size<=MAX_IMG)break;q-=0.1;if(q<0.35){var nw=Math.round(cv.width*.88),nh=Math.round(cv.height*.88);var t=document.createElement('canvas');t.width=nw;t.height=nh;t.getContext('2d').drawImage(cv,0,0,nw,nh);cv.width=nw;cv.height=nh;cx.clearRect(0,0,nw,nh);cx.drawImage(t,0,0);q=0.8}}
+ if(!bl)return file;return new File([bl],file.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});
+}
+async function uploadImg(file,path){
+ var opt=await compressImg(file);
+ var r=await supa.storage.from(BUCKET).upload(path,opt,{upsert:true,contentType:opt.type||'image/jpeg'});
+ if(r.error)throw r.error;
+ return supa.storage.from(BUCKET).getPublicUrl(path).data.publicUrl+'?v='+Date.now();
+}
 
-            await loadProfile(handle);
+/* ── util ── */
+function splitContent(raw){var c=String(raw||'');var m=c.match(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/);if(!m)return{text:c,img:''};return{text:c.replace(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/,'').trim(),img:m[1]}}
+function getStorUrl(path){return supa.storage.from(BUCKET).getPublicUrl(path).data.publicUrl+'?v='+Date.now()}
+function showNF(msg){document.getElementById('profile-area').innerHTML='<div class="not-found"><h2>見つかりません</h2><p>'+esc(msg)+'</p><a href="/"><button class="btn">ホームへ戻る</button></a></div>'}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function fmtD(iso){if(!iso)return'';var d=new Date(iso),n=new Date(),s=(n-d)/1000;if(s<60)return Math.floor(s)+'秒前';if(s<3600)return Math.floor(s/60)+'分前';if(s<86400)return Math.floor(s/3600)+'時間前';return(d.getMonth()+1)+'/'+(d.getDate())}
+function autoLink(txt){return txt.replace(/(https?:\/\/[^\s<&]+)/g,'<a class="auto-link" href="$1" target="_blank" rel="noopener">$1</a>')}
 
-            if (location.hash === '#edit') {
-                const panel = document.getElementById('edit-panel');
-                if (panel) {
-                    panel.classList.add('open');
-                    panel.scrollIntoView({ behavior: 'smooth' });
-                }
-            }
-        }
-
-        function renderHeader(session) {
-            const headerRight = document.getElementById('header-right');
-            const themeBtn = '<button class="icon-btn" id="theme-toggle" onclick="toggleTheme()" title="テーマ切替"></button>';
-
-            if (session) {
-                const profileHref = myHandle ? '/user/?@' + myHandle : '/user/';
-                const editHref    = myHandle ? '/user/?@' + myHandle + '#edit' : '/user/#edit';
-                headerRight.innerHTML = themeBtn +
-                    '<div class="account-wrap">' +
-                    '<button class="account-btn" id="account-btn" onclick="toggleDropdown(event)" title="アカウント"></button>' +
-                    '<div class="account-dropdown" id="account-dropdown">' +
-                    '<a class="dropdown-item" href="' + profileHref + '">' +
-                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M252-256q51-36 114-58t114-22q57 0 119.5 22T714-256q42-56 64-122.5T800-520q0-133-93.5-226.5T480-840q-133 0-226.5 93.5T160-520q0 67 22 133.5T252-256Zm228-168q-57 0-96.5-39.5T344-560q0-57 39.5-96.5T480-696q57 0 96.5 39.5T616-560q0 57-39.5 96.5T480-424Zm0 304q-82 0-155-31.5t-127.5-86Q143-293 111.5-366T80-520q0-82 31.5-155t86-127.5Q253-857 326-888.5T480-920q82 0 155 31.5t127.5 86Q817-747 848.5-674T880-520q0 82-31.5 155t-86 127.5Q707-183 634-151.5T480-120Z"/></svg>' +
-                    'プロフィール</a>' +
-                    '<a class="dropdown-item" href="' + editHref + '">' +
-                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M200-200h40l439-439-40-40-439 439v40Zm-40 80v-104l565-565q11-12 26-18t31-6q16 0 31 6t26 17l42 42q11 11 17 26t6 31q0 16-6 31t-18 26L315-120H160Zm600-557-43-43 43 43Zm-114 71-20-20 40 40-20-20Z"/></svg>' +
-                    'プロフィール編集</a>' +
-                    '<button class="dropdown-item danger" onclick="supa.auth.signOut().then(function(){location.href=\'/\';})">' +
-                    '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h280v80H200Zm440-160-55-58 102-102H360v-80h327L585-622l55-58 200 200-200 200Z"/></svg>' +
-                    'ログアウト</button>' +
-                    '</div></div>';
-
-                const tBtn = document.getElementById('theme-toggle');
-                if (tBtn) tBtn.innerHTML = moonSVG();
-                const aBtn = document.getElementById('account-btn');
-                if (aBtn) aBtn.innerHTML = avatarSVG();
-
-                if (session) updateAccountAvatar(session.user.id);
-            } else {
-                headerRight.innerHTML = themeBtn + '<a href="/"><button class="btn">ログイン</button></a>';
-                const tBtn = document.getElementById('theme-toggle');
-                if (tBtn) tBtn.innerHTML = moonSVG();
-            }
-            updateThemeIcon();
-        }
-
-        function updateAccountAvatar(uid) {
-            const btn = document.getElementById('account-btn');
-            if (!btn) return;
-            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl('profiles/' + uid + '/avatar');
-            if (!data || !data.publicUrl) return;
-            const img = new Image();
-            img.src = data.publicUrl;
-            img.onerror = function() {};
-            img.onload = function() {
-                img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
-                btn.innerHTML = '';
-                btn.appendChild(img);
-            };
-        }
-
-        // プロフィール読み込み
-        async function loadProfile(handle) {
-            const { data: profile, error } = await supa
-                .from('profiles').select('*').eq('user_handle', handle).single();
-
-            if (error || !profile) {
-                showNotFound('@' + handle + ' は見つかりませんでした');
-                return;
-            }
-
-            document.title = profile.display_name + ' (@' + profile.user_handle + ') - Koro';
-
-            const { count } = await supa
-                .from('posts').select('*', { count: 'exact', head: true }).eq('author_handle', handle);
-
-            const isOwn = myHandle && myHandle === profile.user_handle;
-            const avatarChar = profile.display_name ? profile.display_name[0].toUpperCase() : '?';
-            const avatarUrl  = getStoragePublicUrl('profiles/' + profile.id + '/avatar');
-            const headerUrl  = getStoragePublicUrl('profiles/' + profile.id + '/header');
-
-            var editBtn = isOwn
-                ? '<button class="profile-edit-btn" title="プロフィール編集" onclick="toggleEditPanel()">' + pencilSVG() + '</button>'
-                : '';
-
-            var editPanel = isOwn
-                ? '<div class="profile-edit-panel" id="edit-panel">' +
-                  '<label class="field-label">表示名</label>' +
-                  '<input class="field" id="edit-name" type="text" value="' + escapeHTML(profile.display_name) + '" placeholder="表示名">' +
-                  '<label class="field-label">アイコン画像</label>' +
-                  '<div class="edit-img-row">' +
-                  '<label class="edit-img-label">' + imgSVG() + 'アイコン選択<input type="file" accept="image/*" onchange="onSelectEditAvatar(event)"></label>' +
-                  '<span id="edit-avatar-name" class="hint"></span>' +
-                  '</div>' +
-                  '<label class="field-label">ヘッダー画像</label>' +
-                  '<div class="edit-img-row">' +
-                  '<label class="edit-img-label">' + imgSVG() + 'ヘッダー選択<input type="file" accept="image/*" onchange="onSelectEditHeader(event)"></label>' +
-                  '<span id="edit-header-name" class="hint"></span>' +
-                  '</div>' +
-                  '<p class="hint">2MB超の画像は自動圧縮されます。</p>' +
-                  '<button class="btn" style="margin-top:14px;width:100%;" onclick="saveEditProfile(\'' + escapeHTML(profile.id) + '\')">保存する</button>' +
-                  '</div>'
-                : '';
-
-            var bioPart = profile.bio
-                ? '<div class="profile-bio">' + escapeHTML(profile.bio) + '</div>'
-                : '';
-
-            document.getElementById('profile-area').innerHTML =
-                '<div class="profile-card">' +
-                '<div class="profile-banner">' +
-                '<img class="profile-banner-img" src="' + escapeHTML(headerUrl) + '" alt="header" loading="lazy" onerror="this.style.display=\'none\'">' +
-                '</div>' +
-                '<div class="profile-body">' +
-                '<div class="profile-top-row">' +
-                '<div class="profile-avatar">' +
-                '<img class="profile-avatar-img" src="' + escapeHTML(avatarUrl) + '" alt="avatar" loading="lazy"' +
-                ' onerror="onAvatarError(this)">' +
-                '</div>' +
-                editBtn +
-                '</div>' +
-                '<div class="profile-info">' +
-                '<div class="profile-name">' + escapeHTML(profile.display_name) + '</div>' +
-                '<div class="profile-handle">@' + escapeHTML(profile.user_handle) + '</div>' +
-                bioPart +
-                '</div>' +
-                '<div class="profile-stats">' +
-                '<span class="profile-stat"><b>' + (count || 0) + '</b> ころっと</span>' +
-                '</div>' +
-                '</div>' +
-                editPanel +
-                '</div>' +
-                '<div class="posts-list" id="posts-list">' +
-                '<div class="section-label">ころっと</div>' +
-                '<div id="user-timeline">読み込み中...</div>' +
-                '</div>';
-
-            await loadUserPosts(handle, profile.id);
-        }
-
-        function toggleEditPanel() {
-            const panel = document.getElementById('edit-panel');
-            if (panel) panel.classList.toggle('open');
-        }
-
-        function onSelectEditAvatar(event) {
-            editAvatarFile = event.target.files ? event.target.files[0] : null;
-            const span = document.getElementById('edit-avatar-name');
-            if (span) span.textContent = editAvatarFile ? editAvatarFile.name : '';
-        }
-
-        function onSelectEditHeader(event) {
-            editHeaderFile = event.target.files ? event.target.files[0] : null;
-            const span = document.getElementById('edit-header-name');
-            if (span) span.textContent = editHeaderFile ? editHeaderFile.name : '';
-        }
-
-        async function saveEditProfile(uid) {
-            const name = document.getElementById('edit-name').value.trim();
-            if (!name) return alert('表示名を入力してください');
-
-            const btn = document.querySelector('#edit-panel .btn');
-            if (btn) btn.disabled = true;
-
-            try {
-                if (editAvatarFile) await uploadImageToStorage(editAvatarFile, 'profiles/' + uid + '/avatar');
-                if (editHeaderFile) await uploadImageToStorage(editHeaderFile, 'profiles/' + uid + '/header');
-
-                const { error } = await supa.from('profiles').update({ display_name: name }).eq('id', uid);
-                if (error) throw error;
-
-                editAvatarFile = null;
-                editHeaderFile = null;
-                alert('プロフィールを更新しました！');
-                location.reload();
-            } catch (err) {
-                alert('更新に失敗しました: ' + (err && err.message ? err.message : err));
-                if (btn) btn.disabled = false;
-            }
-        }
-
-        // ユーザー投稿
-        async function loadUserPosts(handle, profileId) {
-            const { data, error } = await supa
-                .from('posts').select('*').eq('author_handle', handle).order('created_at', { ascending: false });
-
-            const timeline = document.getElementById('user-timeline');
-            if (error) { timeline.innerHTML = '<div class="load-more-msg">読み込みエラー</div>'; return; }
-            if (!data || data.length === 0) { timeline.innerHTML = '<div class="load-more-msg">まだころっとがありません</div>'; return; }
-
-            const avatarSrc = profileId ? (SUPABASE_URL + '/storage/v1/object/public/' + STORAGE_BUCKET + '/profiles/' + profileId + '/avatar' + '?v=' + Date.now()) : '';
-
-            timeline.innerHTML = data.map(function(p) {
-                const parsed = splitPostContent(p.content);
-                const imgPart = parsed.imageUrl
-                    ? '<div class="post-image"><img src="' + escapeHTML(parsed.imageUrl) + '" alt="post image" loading="lazy"></div>'
-                    : '';
-                const avImg = avatarSrc
-                    ? '<img src="' + escapeHTML(avatarSrc) + '" alt="" loading="lazy" onerror="postAvatarError(this)">'
-                    : avatarSVG();
-                return '<div class="post-item">' +
-                    '<div class="post-row">' +
-                    '<a href="/user/?@' + escapeHTML(p.author_handle || '') + '" class="post-avatar-sm">' + avImg + '</a>' +
-                    '<div class="post-row-content">' +
-                    '<div class="post-meta">' +
-                    '<span class="post-name">' + escapeHTML(p.author || 'ななし') + '</span>' +
-                    '<span class="post-handle">@' + escapeHTML(p.author_handle || 'none') + '</span>' +
-                    '<span class="post-time">' + formatDate(p.created_at) + '</span>' +
-                    '</div>' +
-                    '<div class="post-body">' + escapeHTML(parsed.text) + '</div>' +
-                    imgPart +
-                    '</div>' +
-                    '</div>' +
-                    '</div>';
-            }).join('');
-        }
-
-        // 画像圧縮
-        async function compressImageIfNeeded(file) {
-            if (!(file instanceof File)) return file;
-            if (file.size <= MAX_IMAGE_BYTES) return file;
-            const bitmap = await createImageBitmap(file);
-            let w = bitmap.width, h = bitmap.height;
-            const maxSide = 1920;
-            if (Math.max(w, h) > maxSide) { const r = maxSide / Math.max(w, h); w = Math.round(w*r); h = Math.round(h*r); }
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = w; canvas.height = h;
-            ctx.drawImage(bitmap, 0, 0, w, h);
-            let quality = 0.9, blob = null;
-            for (let i = 0; i < 8; i++) {
-                blob = await new Promise(function(resolve) { canvas.toBlob(resolve, 'image/jpeg', quality); });
-                if (!blob || blob.size <= MAX_IMAGE_BYTES) break;
-                quality -= 0.1;
-                if (quality < 0.35) {
-                    const nW = Math.max(600, Math.round(canvas.width * 0.9));
-                    const nH = Math.max(600, Math.round(canvas.height * 0.9));
-                    const tmp = document.createElement('canvas');
-                    tmp.width = nW; tmp.height = nH;
-                    tmp.getContext('2d').drawImage(canvas, 0, 0, nW, nH);
-                    canvas.width = nW; canvas.height = nH;
-                    ctx.clearRect(0, 0, nW, nH); ctx.drawImage(tmp, 0, 0);
-                    quality = 0.8;
-                }
-            }
-            if (!blob) return file;
-            return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
-        }
-
-        async function uploadImageToStorage(file, path) {
-            const optimized = await compressImageIfNeeded(file);
-            const { error } = await supa.storage.from(STORAGE_BUCKET).upload(path, optimized, {
-                upsert: true, contentType: optimized.type || 'image/jpeg'
-            });
-            if (error) throw error;
-            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-            return data.publicUrl + '?v=' + Date.now();
-        }
-
-        // ユーティリティ
-        function splitPostContent(rawContent) {
-            const content = String(rawContent || '');
-            const match = content.match(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/);
-            if (!match) return { text: content, imageUrl: '' };
-            const text = content.replace(/\n?\n?\[img\](https?:\/\/[^\s]+)\[\/img\]\s*$/, '').trim();
-            return { text: text, imageUrl: match[1] };
-        }
-
-        function getStoragePublicUrl(path) {
-            const { data } = supa.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-            return data.publicUrl + '?v=' + Date.now();
-        }
-
-        function showNotFound(msg) {
-            document.getElementById('profile-area').innerHTML =
-                '<div class="not-found">' +
-                '<h2>見つかりません</h2>' +
-                '<p>' + escapeHTML(msg) + '</p>' +
-                '<a href="/"><button class="btn">ホームへ戻る</button></a>' +
-                '</div>';
-        }
-
-        function escapeHTML(str) {
-            if (!str) return '';
-            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-        }
-
-        function formatDate(iso) {
-            if (!iso) return '';
-            const d = new Date(iso), now = new Date(), diff = (now - d) / 1000;
-            if (diff < 60)    return Math.floor(diff) + '秒前';
-            if (diff < 3600)  return Math.floor(diff/60) + '分前';
-            if (diff < 86400) return Math.floor(diff/3600) + '時間前';
-            return (d.getMonth()+1) + '/' + d.getDate();
-        }
-
-        init();
-    </script>
+init();
+</script>
 </body>
 </html>
