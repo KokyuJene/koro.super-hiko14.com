@@ -22,7 +22,7 @@ var SB_KEY='sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
 var supa=supabase.createClient(SB_URL,SB_KEY);
 var BUCKET='koro-media',MAX_IMG=2*1024*1024;
 var mySession=null,myHandle=null,myUid=null;
-var editAvFile=null,editHdFile=null;
+var editAvFile=null,editHdFile=null,verifiedCache={};
 var viewProfile=null,likeCache={},myLikes={};
 
 /* ── theme ── */
@@ -39,10 +39,24 @@ function imgI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" view
 function heartI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Z"/></svg>'}
 function heartOI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Zm0-108q96-86 158-147.5t98-107q36-45.5 50-81t14-70.5q0-60-40-100t-100-40q-47 0-87 26.5T480-640q-33-48-73.5-74T320-740q-60 0-100 40t-40 100q0 35 14 70.5t50 81q36 45.5 98 107T480-228Zm0-273Z"/></svg>'}
 function trashI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>'}
+
+/* ── toast ── */
+function showToast(msg,type){
+ var t=document.getElementById('koro-toast');
+ if(!t){t=document.createElement('div');t.id='koro-toast';document.body.appendChild(t)}
+ t.className=type||'';t.textContent=msg;
+ clearTimeout(t._tid);t.classList.add('show');
+ t._tid=setTimeout(function(){t.classList.remove('show')},3000);
+}
 function avErr(el){var p=el.parentElement;if(!p)return;el.remove();p.innerHTML=avI()}
 function postItemClick(pid,ev){if(ev&&ev.target&&ev.target.closest('button,a,label'))return;location.href='/post/?id='+pid}
 function replyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M132-180v-588q0-26 17-43t43-17h576q26 0 43 17t17 43v416q0 26-17 43t-43 17H244L132-180Zm100-140h536q12 0 22-10t10-22v-416q0-12-10-22t-22-10H192q-12 0-22 10t-10 22v520l72-72Zm-72 0v-480 480Z"/></svg>'}
+function verifyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" class="verify-badge" aria-label="認証済み"><path d="m366-126-64-108-122-26 12-126-82-94 82-94-12-126 122-26 64-108 114 48 114-48 64 108 122 26-12 126 82 94-82 94 12 126-122 26-64 108-114-48-114 48Zm12-36 102-42 102 42 58-96 110-24-10-114 74-84-74-84 10-114-110-24-58-96-102 42-102-42-58 96-110 24 10 114-74 84 74 84-10 114 110 24 58 96Zm102-318Zm-42 106 190-190-20-20-170 170-86-86-20 20 106 106Z"/></svg>'}
 function repostI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M296-132 172-256l124-124 20 20-90 90h470v-160h28v188H226l90 90-20 20Zm-60-398v-188h498l-90-90 20-20 124 124-124 124-20-20 90-90H264v160h-28Z"/></svg>'}
+
+/* ── scroll helpers ── */
+function isAtBottom(){return window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-100}
+function scrollToBottom(){window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
 
 /* ── dropdown ── */
 function toggleDD(e){e.stopPropagation();var d=document.getElementById('account-dropdown');if(d)d.classList.toggle('open')}
@@ -65,6 +79,54 @@ async function init(){
  if(!handle){showNF('URLにハンドルが指定されていません');return}
  await loadProfile(handle);
  if(location.hash==='#edit'){var ep=document.getElementById('edit-panel');if(ep){ep.classList.add('open');setTimeout(function(){ep.scrollIntoView({behavior:'smooth'})},200)}}
+ subscribeRT(handle,viewProfile.id);
+}
+
+/* ── realtime ── */
+function subscribeRT(handle,profId){
+ var avUrl=profId?(supa.storage.from(BUCKET).getPublicUrl('profiles/'+profId+'/avatar').data.publicUrl+'?v='+Date.now()):'';
+ supa.channel('user-timeline').on('postgres_changes',{event:'INSERT',schema:'public',table:'posts'},async function(payload){
+  var p=payload.new;if(!p||!p.id)return;
+  if(p.author_handle!==handle)return;
+  var tl=document.getElementById('user-timeline');if(!tl)return;
+  var empty=tl.querySelector('.load-more-msg');if(empty)empty.remove();
+  var pa=splitContent(p.content);
+  var imgH=pa.img?'<div class="post-image"><img src="'+esc(pa.img)+'" loading="lazy"></div>':'';
+  var avH=avUrl?'<img src="'+esc(avUrl)+'" loading="lazy" onerror="avErr(this)">':avI();
+  var isOwn=myHandle&&myHandle===p.author_handle;
+  var delH=isOwn&&p.id?'<button class="action-btn delete-btn" onclick="delPost(\''+esc(p.id)+'\')">'+ trashI()+'</button>':'';
+  var likeH=p.id?'<button class="action-btn like-btn" onclick="togLike(\''+esc(p.id)+'\')" ><span class="like-icon">'+heartOI()+'</span><span class="like-count"></span></button>':'';
+  var replyH=p.id?('<a class="action-btn reply-btn" href="/post/?id='+esc(p.id)+'">'+replyI()+'</a>'):'';
+  var qpa=p.repost_of?splitContent(p.repost_content||''):null;
+  var quoteImgH=qpa&&qpa.img?'<div class="post-image" style="margin-top:6px"><img src="'+esc(qpa.img)+'" loading="lazy"></div>':'';
+  var quoteH=p.repost_of?('<div class="repost-quote"><div class="repost-quote-meta"><b>'+esc(p.repost_author||'')+'</b> @'+esc(p.repost_handle||'')+'</div><div class="repost-quote-body">'+autoLink(esc(qpa?qpa.text||'':''))+'</div>'+quoteImgH+'</div>'):'';
+  var recoroLabel=p.repost_of?'<div class="recoro-label">'+repostI()+' リコロ</div>':'';
+  var h='<div class="post-item"'+(p.id?' data-post-id="'+esc(p.id)+'"':'')+(p.repost_of?' style="border-left:3px solid #00ba7c"':'')+(p.id?' onclick="postItemClick(\''+esc(p.id)+'\',event)"':'')+'>'+recoroLabel+'<div class="post-row"><a href="/user/?@'+esc(p.author_handle||'')+'" class="post-avatar-sm">'+avH+'</a><div class="post-row-content"><div class="post-meta"><span class="post-name">'+esc(p.author||'ななし')+'</span><span class="post-handle">@'+esc(p.author_handle||'none')+'</span><span class="post-time" title="'+(p.created_at||'')+'">'+fmtD(p.created_at)+'</span></div>'+(pa.text?'<div class="post-body">'+autoLink(esc(pa.text))+'</div>':'')+quoteH+imgH+'<div class="post-actions">'+replyH+likeH+delH+'</div></div></div></div>';
+  var div=document.createElement('div');div.innerHTML=h;
+  var atBottom=isAtBottom();tl.appendChild(div.firstChild);
+  if(atBottom)scrollToBottom();
+  try{new Audio('../oto.mp3').play().catch(function(){});}catch(ex){}
+ }).on('postgres_changes',{event:'INSERT',schema:'public',table:'likes'},function(payload){
+  var l=payload.new;if(!l||!l.post_id)return;
+  if(myProfile&&l.user_id===myProfile.id)return; /* 自分のいいね: optimistic済みでスキップ */
+  var pid=String(l.post_id);
+  likeCache[pid]=(likeCache[pid]||0)+1;
+  var el=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+  if(el)el.textContent=likeCache[pid]||'';
+  var btn=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
+  if(btn){var ic=btn.querySelector('.like-icon');if(ic)ic.innerHTML=heartI();btn.classList.add('liked')}
+ }).on('postgres_changes',{event:'DELETE',schema:'public',table:'likes'},function(payload){
+  var l=payload.old;if(!l||!l.post_id)return;
+  if(myProfile&&l.user_id===myProfile.id)return;
+  var pid=String(l.post_id);
+  likeCache[pid]=Math.max(0,(likeCache[pid]||0)-1);
+  var el=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+  if(el)el.textContent=likeCache[pid]||'';
+ }).on('postgres_changes',{event:'DELETE',schema:'public',table:'posts'},function(payload){
+  var pid=payload.old.id;if(!pid)return;
+  var el=document.querySelector('[data-post-id="'+pid+'"]');
+  if(el){el.style.opacity='0';setTimeout(function(){el.remove()},300)}
+ }).subscribe();
 }
 
 function renderHeader(session){
@@ -130,7 +192,12 @@ async function loadProfile(handle){
   '<div class="edit-img-row"><label class="edit-img-label">'+imgI()+'ヘッダー選択<input type="file" accept="image/*" onchange="onSelHd(event)"></label><span id="edit-hd-nm" class="hint"></span></div>'+
   '<p class="hint">2MB超は自動圧縮されます。</p>'+
   '<button class="btn" style="margin-top:14px;width:100%" onclick="saveEdit(\''+esc(prof.id)+'\')">保存する</button></div>':'';
+ /* set verified cache */
+ if(prof.verified)verifiedCache[prof.user_handle]=true;
  document.getElementById('profile-area').innerHTML=
+  '<div class="posts-list" id="posts-list">'+
+  '<div class="section-label">ころっと</div>'+
+  '<div id="user-timeline"><div class="load-more-msg">読み込み中...</div></div></div>'+
   '<div class="profile-card">'+
   '<div class="profile-banner"><img class="profile-banner-img" src="'+esc(hdUrl)+'" loading="lazy" onerror="this.style.display=\'none\'"></div>'+
   '<div class="profile-body">'+
@@ -139,7 +206,7 @@ async function loadProfile(handle){
   actionBtn+
   '</div>'+
   '<div class="profile-info">'+
-  '<div class="profile-name">'+esc(prof.display_name)+'</div>'+
+  '<div class="profile-name">'+esc(prof.display_name)+(prof.verified?' '+verifyI():'')+'</div>'+
   '<div class="profile-handle">@'+esc(prof.user_handle)+'</div>'+
   (prof.bio?'<div class="profile-bio">'+esc(prof.bio)+'</div>':'')+
   '</div>'+
@@ -147,16 +214,10 @@ async function loadProfile(handle){
   '<span class="profile-stat"><b>'+pc+'</b> ころっと</span>'+
   '<span class="profile-stat"><b>'+fingCount+'</b> フォロー</span>'+
   '<span class="profile-stat follow-stat-fers"><b>'+fersCount+'</b> フォロワー</span>'+
-  '</div></div>'+editPanel+'</div>'+
-  '<div class="posts-list" id="posts-list">'+
-  '<div class="section-label">ころっと</div>'+
-  '<div id="user-timeline"><div class="load-more-msg">読み込み中...</div></div></div>';
+  '</div></div>'+editPanel+'</div>';
  await loadUserPosts(handle,prof.id);
- /* プロフカードをスキップして投稿を表示 */
- requestAnimationFrame(function(){
-  var pl=document.getElementById('posts-list');
-  if(pl)pl.scrollIntoView({behavior:'smooth',block:'start'});
- });
+ /* 投稿一覧の一番下へスクロール */
+ requestAnimationFrame(scrollToBottom);
 }
 
 /* ── follow ── */
@@ -177,7 +238,7 @@ async function toggleFollow(targetId){
   var fc=await supa.from('follows').select('*',{count:'exact',head:true}).eq('following_id',targetId);
   var stat=document.querySelector('.follow-stat-fers');
   if(stat)stat.innerHTML='<b>'+(fc.count||0)+'</b> フォロワー';
- }catch(e){alert('エラー: '+(e&&e.message?e.message:e))}
+ }catch(e){console.error('err:',e);showToast('エラーが発生しました','error')}
  btn.disabled=false;
 }
 
@@ -187,15 +248,15 @@ function onSelAv(e){editAvFile=e.target.files?e.target.files[0]:null;var s=docum
 function onSelHd(e){editHdFile=e.target.files?e.target.files[0]:null;var s=document.getElementById('edit-hd-nm');if(s)s.textContent=editHdFile?editHdFile.name:''}
 async function saveEdit(uid){
  var nm=document.getElementById('edit-name').value.trim();
- if(!nm)return alert('表示名を入力してください');
+ if(!nm)showToast('表示名を入力してください');return;
  var btn=document.querySelector('#edit-panel .btn');if(btn)btn.disabled=true;
  try{
   if(editAvFile)await uploadImg(editAvFile,'profiles/'+uid+'/avatar');
   if(editHdFile)await uploadImg(editHdFile,'profiles/'+uid+'/header');
   var r=await supa.from('profiles').update({display_name:nm}).eq('id',uid);
   if(r.error)throw r.error;
-  editAvFile=null;editHdFile=null;alert('プロフィールを更新しました');location.reload();
- }catch(err){alert('更新に失敗しました: '+(err&&err.message?err.message:err));if(btn)btn.disabled=false}
+  editAvFile=null;editHdFile=null;showToast('プロフィールを更新しました','success');setTimeout(function(){location.reload()},1000);
+ }catch(err){console.error('update:',err);showToast('更新できませんでした','error');if(btn)btn.disabled=false}
 }
 
 /* ── like (bug fixed: error handling + revert) ── */
@@ -208,7 +269,7 @@ async function fetchLikes(ids){
  }catch(e){console.error('fetchLikes:',e)}
 }
 async function togLike(pid){
- if(!myUid){alert('ログインしてください');return}
+ if(!myUid){showToast('ログインしてください');return}
  var el=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
  var ce=document.querySelector('[data-post-id="'+pid+'"] .like-count');
  var ic=document.querySelector('[data-post-id="'+pid+'"] .like-icon');
@@ -226,7 +287,7 @@ async function togLike(pid){
   if(r&&r.error)throw r.error;
  }catch(err){
   console.error('like error:',err);
-  alert('いいねの保存に失敗しました。\nSupabaseのlikesテーブルが作成されているか確認してください。\n'+((err&&err.message)||err));
+  console.error('like:',err);showToast('いいねできませんでした','error');
   if(wasLiked){myLikes[pid]=true;likeCache[pid]=(likeCache[pid]||0)+1}
   else{delete myLikes[pid];likeCache[pid]=Math.max(0,(likeCache[pid]||0)-1)}
   el.classList.toggle('liked',!!myLikes[pid]);
@@ -237,12 +298,12 @@ async function togLike(pid){
 async function delPost(pid){
  if(!confirm('この投稿を削除しますか？'))return;
  try{var r=await supa.from('posts').delete().eq('id',pid);if(r.error)throw r.error;var el=document.querySelector('[data-post-id="'+pid+'"]');if(el){el.style.transition='opacity .3s';el.style.opacity='0';setTimeout(function(){el.remove()},320)}}
- catch(err){alert('削除に失敗しました: '+(err.message||err))}
+ catch(err){console.error('del:',err);showToast('削除できませんでした','error')}
 }
 
 /* ── user posts ── */
 async function loadUserPosts(handle,profId){
- var r=await supa.from('posts').select('*').eq('author_handle',handle).order('created_at',{ascending:false});
+ var r=await supa.from('posts').select('*').eq('author_handle',handle).order('created_at',{ascending:true});
  var tl=document.getElementById('user-timeline');
  if(r.error){tl.innerHTML='<div class="load-more-msg">読み込みエラー</div>';return}
  if(!r.data||!r.data.length){tl.innerHTML='<div class="load-more-msg">まだころっとがありません</div>';return}
@@ -270,13 +331,14 @@ async function loadUserPosts(handle,profId){
    '<a href="/user/?@'+esc(p.author_handle||'')+'" class="post-avatar-sm">'+avH+'</a>'+
    '<div class="post-row-content">'+
    '<div class="post-meta">'+
-   '<span class="post-name">'+esc(p.author||'ななし')+'</span>'+
+   '<span class="post-name">'+esc(p.author||'ななし')+(verifiedCache[p.author_handle]?' '+verifyI():'')+'</span>'+
    '<span class="post-handle">@'+esc(p.author_handle||'none')+'</span>'+
    '<span class="post-time" title="'+(p.created_at||'')+'">'+fmtD(p.created_at)+'</span>'+
    '</div>'+(pa.text?'<div class="post-body">'+autoLink(esc(pa.text))+'</div>':'')+quoteH+imgH+
    '<div class="post-actions">'+replyH+likeH+delH+'</div>'+
    '</div></div></div>';
  }).join('');
+ requestAnimationFrame(scrollToBottom);
 }
 
 /* ── image ── */

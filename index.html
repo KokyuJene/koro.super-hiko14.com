@@ -24,7 +24,7 @@ var SB_KEY='sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
 var supa=supabase.createClient(SB_URL,SB_KEY);
 var PAGE=20,MAX_CHARS=280,BUCKET='koro-media',MAX_IMG=2*1024*1024;
 var myProfile=null,oldest=null,isLoading=false,allLoaded=false,authVer=0;
-var selectedImg=null,uidCache={},likeCache={},myLikes={},rpCountCache={};
+var selectedImg=null,uidCache={},likeCache={},myLikes={},rpCountCache={},verifiedCache={};
 
 /* ── theme ── */
 (function(){document.documentElement.setAttribute('data-theme',localStorage.getItem('koro-theme')||'light')})();
@@ -39,22 +39,36 @@ function heartI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" vi
 function heartOI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Zm0-108q96-86 158-147.5t98-107q36-45.5 50-81t14-70.5q0-60-40-100t-100-40q-47 0-87 26.5T480-640q-33-48-73.5-74T320-740q-60 0-100 40t-40 100q0 35 14 70.5t50 81q36 45.5 98 107T480-228Zm0-273Z"/></svg>'}
 function trashI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>'}
 function imgI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="22" viewBox="0 -960 960 960" width="22" fill="currentColor"><path d="M232-172q-26 0-43-17t-17-43v-496q0-26 17-43t43-17h496q26 0 43 17t17 43v496q0 26-17 43t-43 17H232Zm0-60h496v-496H232v496Zm28-76h440L576-480 456-320l-96-128-100 140Zm-28 76v-496 496Z"/></svg>'}
+
+/* ── toast ── */
+function showToast(msg,type){
+ var t=document.getElementById('koro-toast');
+ if(!t){t=document.createElement('div');t.id='koro-toast';document.body.appendChild(t)}
+ t.className=type||'';t.textContent=msg;
+ clearTimeout(t._tid);t.classList.add('show');
+ t._tid=setTimeout(function(){t.classList.remove('show')},3000);
+}
 function avErr(el){var p=el.parentElement;if(!p)return;el.remove();p.innerHTML=avI()}
 function postItemClick(pid,ev){if(ev&&ev.target&&ev.target.closest('button,a,label'))return;location.href='/post/?id='+pid}
 function replyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M132-180v-588q0-26 17-43t43-17h576q26 0 43 17t17 43v416q0 26-17 43t-43 17H244L132-180Zm100-140h536q12 0 22-10t10-22v-416q0-12-10-22t-22-10H192q-12 0-22 10t-10 22v520l72-72Zm-72 0v-480 480Z"/></svg>'}
+function verifyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" class="verify-badge" aria-label="認証済み"><path d="m366-126-64-108-122-26 12-126-82-94 82-94-12-126 122-26 64-108 114 48 114-48 64 108 122 26-12 126 82 94-82 94 12 126-122 26-64 108-114-48-114 48Zm12-36 102-42 102 42 58-96 110-24-10-114 74-84-74-84 10-114-110-24-58-96-102 42-102-42-58 96-110 24 10 114-74 84 74 84-10 114 110 24 58 96Zm102-318Zm-42 106 190-190-20-20-170 170-86-86-20 20 106 106Z"/></svg>'}
 function repostI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M296-132 172-256l124-124 20 20-90 90h470v-160h28v188H226l90 90-20 20Zm-60-398v-188h498l-90-90 20-20 124 124-124 124-20-20 90-90H264v160h-28Z"/></svg>'}
 
 /* ── dropdown ── */
 function toggleDD(e){e.stopPropagation();var d=document.getElementById('account-dropdown');if(d)d.classList.toggle('open')}
 document.addEventListener('click',function(){var d=document.getElementById('account-dropdown');if(d)d.classList.remove('open')});
 
+/* ── scroll helpers ── */
+function isAtBottom(){return window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-100}
+function scrollToBottom(){window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
+
 /* ── init ── */
 async function init(){
  var s=(await supa.auth.getSession()).data.session;
  await handleAuth(s);
- supa.auth.onAuthStateChange(async function(_,ns){await handleAuth(ns)});
+ supa.auth.onAuthStateChange(async function(ev,ns){if(ev==='INITIAL_SESSION')return;await handleAuth(ns)});
  await loadPosts('initial');
- requestAnimationFrame(function(){window.scrollTo(0,document.body.scrollHeight)});
+ scrollToBottom();
  subscribeRT();
 }
 
@@ -121,13 +135,13 @@ function renderSetupHandle(){
 async function saveHandle(){
  var h=document.getElementById('setup-handle').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
  var n=document.getElementById('setup-name').value.trim();
- if(!h)return alert('ハンドルを入力してください');if(!n)return alert('表示名を入力してください');
- if(!/^[a-z0-9_]{1,30}$/.test(h))return alert('英数字と_のみ使えます');
+ if(!h)return showToast('ハンドルを入力してください');if(!n)return showToast('表示名を入力してください');
+ if(!/^[a-z0-9_]{1,30}$/.test(h))return showToast('英数字と_のみ使えます');
  var s=(await supa.auth.getSession()).data.session;if(!s)return;
  var chk=await supa.from('profiles').select('id').eq('user_handle',h).single();
- if(chk.data)return alert('そのハンドルは使われています');
+ if(chk.data)return showToast('そのハンドルは使われています');
  var r=await supa.from('profiles').upsert([{id:s.user.id,user_handle:h,display_name:n}]);
- if(r.error)return alert('エラー: '+r.error.message);
+ if(r.error)console.error(r.error);showToast('保存に失敗しました','error');return;
  location.reload();
 }
 
@@ -193,13 +207,13 @@ async function fetchLikes(ids){
 async function prefetchUids(posts){
  var hs=[...new Set(posts.map(function(p){return p.author_handle}).filter(Boolean))];
  var miss=hs.filter(function(h){return !uidCache[h]});if(!miss.length)return;
- var r=await supa.from('profiles').select('id,user_handle').in('user_handle',miss);
- if(r.data)r.data.forEach(function(p){uidCache[p.user_handle]=p.id});
+ var r=await supa.from('profiles').select('id,user_handle,verified').in('user_handle',miss);
+ if(r.data)r.data.forEach(function(p){uidCache[p.user_handle]=p.id;if(p.verified)verifiedCache[p.user_handle]=true});
 }
 
 /* ── like toggle (bug fixed: revert on error) ── */
 async function togLike(pid){
- if(!myProfile){alert('ログインしてください');return}
+ if(!myProfile){showToast('ログインしてください');return}
  var el=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
  var ce=document.querySelector('[data-post-id="'+pid+'"] .like-count');
  var ic=document.querySelector('[data-post-id="'+pid+'"] .like-icon');
@@ -231,7 +245,7 @@ async function togLike(pid){
 async function delPost(pid){
  if(!confirm('この投稿を削除しますか？'))return;
  try{var r=await supa.from('posts').delete().eq('id',pid);if(r.error)throw r.error;var el=document.querySelector('[data-post-id="'+pid+'"]');if(el){el.style.transition='opacity .3s,transform .3s';el.style.opacity='0';el.style.transform='scale(.97)';setTimeout(function(){el.remove()},320)}}
- catch(err){alert('削除に失敗しました: '+(err.message||err))}
+ catch(err){console.error('del:',err);showToast('削除できませんでした','error')}
 }
 
 /* ── post HTML ── */
@@ -261,7 +275,7 @@ function postHTML(p){
   '<a href="/user/?@'+e(p.author_handle||'')+'" class="post-avatar-sm">'+avH+'</a>'+
   '<div class="post-row-content">'+
   '<div class="post-meta">'+
-  '<span class="post-name">'+e(p.author||'ななし')+'</span>'+
+  '<span class="post-name">'+e(p.author||'ななし')+(verifiedCache[p.author_handle]?' '+verifyI():'')+'</span>'+
   '<span class="post-handle">@'+e(p.author_handle||'none')+'</span>'+
   '<span class="post-time" title="'+(p.created_at||'')+'">'+fmtD(p.created_at)+'</span>'+
   '</div>'+bodyTxt+quoteH+imgH+
@@ -286,19 +300,22 @@ async function loadPosts(mode){
  await fetchLikes(ids);
  await fetchRpCounts(ids);
  var fd=document.getElementById('feed');
- posts.forEach(function(p){var d=document.createElement('div');d.innerHTML=postHTML(p);fd.appendChild(d.firstChild)});
+ var frag=document.createDocumentFragment();
+ posts.slice().reverse().forEach(function(p){var d=document.createElement('div');d.innerHTML=postHTML(p);frag.appendChild(d.firstChild)});
+ if(mode==='initial'||!fd.firstChild){fd.appendChild(frag);}
+ else{fd.insertBefore(frag,fd.firstChild);}
  if(posts.length<PAGE)allLoaded=true;
 }
 
-/* ── scroll ── */
-window.addEventListener('scroll',function(){if((window.scrollY+window.innerHeight)>=(document.documentElement.scrollHeight-400))loadPosts('more')});
+/* ── scroll: 一番上までのぼると古い投稿を読み込む ── */
+window.addEventListener('scroll',function(){if(window.scrollY<=150)loadPosts('more')});
 
 /* ── new post ── */
 async function doPost(){
  if(!myProfile)return;
  var ta=document.getElementById('post-text'),btn=document.getElementById('post-btn');
  var txt=(ta&&ta.value)||'';
- if([...txt].length>MAX_CHARS)return alert(MAX_CHARS+'文字以内で入力してください');
+ if([...txt].length>MAX_CHARS)showToast(MAX_CHARS+'文字以内で入力してください');return;
  if(!txt.trim()&&!selectedImg)return;
  if(btn)btn.disabled=true;
  try{
@@ -308,15 +325,17 @@ async function doPost(){
   var ins=await supa.from('posts').insert([{content:content,author:myProfile.display_name,author_handle:myProfile.user_handle}]).select();
   if(ins.error)throw ins.error;
   if(ta)ta.value='';clearImg();updateCC();
-  if(ins.data&&ins.data[0]){var np=ins.data[0];likeCache[np.id]=0;prependPost(np)}
- }catch(err){alert('投稿に失敗しました: '+(err.message||err))}
+  if(ins.data&&ins.data[0]){var np=ins.data[0];likeCache[np.id]=0;appendPost(np,true)}
+ }catch(err){console.error('post:',err);showToast('投稿できませんでした','error')}
  if(btn)btn.disabled=false;
 }
 
-function prependPost(p){
+function appendPost(p,forceScroll){
  var fd=document.getElementById('feed');if(!fd)return;
+ var atBottom=isAtBottom();
  var d=document.createElement('div');d.innerHTML=postHTML(p);var el=d.firstChild;
- fd.insertBefore(el,fd.firstChild);
+ fd.appendChild(el);
+ if(forceScroll||atBottom)scrollToBottom();
  try{new Audio('oto.mp3').play().catch(function(){});}catch(ex){}
 }
 
@@ -332,7 +351,7 @@ async function fetchRpCounts(ids){
 
 /* ── repost modal ── */
 function showRepostBox(pid,author,handle,content){
- if(!myProfile){alert('ログインしてください');return}
+ if(!myProfile){showToast('ログインしてください');return}
  var bd=document.createElement('div');bd.className='repost-modal-backdrop';bd.id='repost-bd';
  bd.onclick=function(ev){if(ev.target===bd)closeRepostBox()};
  var cparsed=splitContent(content);var cqImgH=cparsed.img?'<div class="post-image" style="margin-top:6px"><img src="'+e(cparsed.img)+'" loading="lazy"></div>':'';
@@ -369,7 +388,7 @@ async function doRepost(pid,author,handle,content){
   if(ins.error)throw ins.error;
   closeRepostBox();
   if(ins.data&&ins.data[0]){likeCache[ins.data[0].id]=0;prependPost(ins.data[0])}
- }catch(err){alert('リコロに失敗しました: '+(err.message||err));if(sb)sb.disabled=false}
+ }catch(err){console.error('recoro:',err);showToast('リコロできませんでした','error');if(sb)sb.disabled=false}
 }
 
 /* ── realtime ── */
@@ -379,7 +398,27 @@ function subscribeRT(){
   if(p.reply_to&&!p.repost_of)return; // リプころはフィードに出さない
   if(myProfile&&p.author_handle===myProfile.user_handle)return;
   if(p.author_handle&&!uidCache[p.author_handle]){await prefetchUids([p])}
-  likeCache[p.id]=0;rpCountCache[p.id]=0;prependPost(p);
+  likeCache[p.id]=0;rpCountCache[p.id]=0;appendPost(p,false);
+ }).on('postgres_changes',{event:'INSERT',schema:'public',table:'likes'},function(payload){
+  var l=payload.new;if(!l||!l.post_id)return;
+  if(myProfile&&l.user_id===myProfile.id)return; /* 自分のいいね: optimistic済みでスキップ */
+  var pid=String(l.post_id);
+  likeCache[pid]=(likeCache[pid]||0)+1;
+  var el=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+  if(el)el.textContent=likeCache[pid]||'';
+  var btn=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
+  if(btn){var ic=btn.querySelector('.like-icon');if(ic)ic.innerHTML=heartI();btn.classList.add('liked')}
+ }).on('postgres_changes',{event:'DELETE',schema:'public',table:'likes'},function(payload){
+  var l=payload.old;if(!l||!l.post_id)return;
+  if(myProfile&&l.user_id===myProfile.id)return;
+  var pid=String(l.post_id);
+  likeCache[pid]=Math.max(0,(likeCache[pid]||0)-1);
+  var el=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+  if(el)el.textContent=likeCache[pid]||'';
+ }).on('postgres_changes',{event:'DELETE',schema:'public',table:'posts'},function(payload){
+  var pid=payload.old.id;if(!pid)return;
+  var el=document.querySelector('[data-post-id="'+pid+'"]');
+  if(el){el.style.opacity='0';setTimeout(function(){el.remove()},300)}
  }).subscribe();
 }
 

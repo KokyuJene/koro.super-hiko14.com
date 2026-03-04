@@ -22,7 +22,7 @@ var SB_KEY='sb_publishable_tCoFSVcVmu3nVb1mJ8YARg_96lslr3P';
 var supa=supabase.createClient(SB_URL,SB_KEY);
 var BUCKET='koro-media',MAX_CHARS=280,MAX_IMG=2*1024*1024;
 var mySession=null,myProfile=null,myUid=null;
-var rootPost=null,allReplies=[],uidCache={},likeCache={},myLikes={};
+var rootPost=null,allReplies=[],uidCache={},likeCache={},myLikes={},verifiedCache={};
 var selectedImpl=null; // inline reply selected file
 
 /* ── theme ── */
@@ -38,8 +38,18 @@ function heartI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" vi
 function heartOI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Zm0-108q96-86 158-147.5t98-107q36-45.5 50-81t14-70.5q0-60-40-100t-100-40q-47 0-87 26.5T480-640q-33-48-73.5-74T320-740q-60 0-100 40t-40 100q0 35 14 70.5t50 81q36 45.5 98 107T480-228Zm0-273Z"/></svg>'}
 function trashI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>'}
 function replyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M132-180v-588q0-26 17-43t43-17h576q26 0 43 17t17 43v416q0 26-17 43t-43 17H244L132-180Zm100-140h536q12 0 22-10t10-22v-416q0-12-10-22t-22-10H192q-12 0-22 10t-10 22v520l72-72Zm-72 0v-480 480Z"/></svg>'}
+function verifyI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" class="verify-badge" aria-label="認証済み"><path d="m366-126-64-108-122-26 12-126-82-94 82-94-12-126 122-26 64-108 114 48 114-48 64 108 122 26-12 126 82 94-82 94 12 126-122 26-64 108-114-48-114 48Zm12-36 102-42 102 42 58-96 110-24-10-114 74-84-74-84 10-114-110-24-58-96-102 42-102-42-58 96-110 24 10 114-74 84 74 84-10 114 110 24 58 96Zm102-318Zm-42 106 190-190-20-20-170 170-86-86-20 20 106 106Z"/></svg>'}
 function repostI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M296-132 172-256l124-124 20 20-90 90h470v-160h28v188H226l90 90-20 20Zm-60-398v-188h498l-90-90 20-20 124 124-124 124-20-20 90-90H264v160h-28Z"/></svg>'}
 function imgI(){return '<svg xmlns="http://www.w3.org/2000/svg" height="16" viewBox="0 -960 960 960" width="16" fill="currentColor"><path d="M232-172q-26 0-43-17t-17-43v-496q0-26 17-43t43-17h496q26 0 43 17t17 43v496q0 26-17 43t-43 17H232Zm0-60h496v-496H232v496Zm28-76h440L576-480 456-320l-96-128-100 140Zm-28 76v-496 496Z"/></svg>'}
+
+/* ── toast ── */
+function showToast(msg,type){
+ var t=document.getElementById('koro-toast');
+ if(!t){t=document.createElement('div');t.id='koro-toast';document.body.appendChild(t)}
+ t.className=type||'';t.textContent=msg;
+ clearTimeout(t._tid);t.classList.add('show');
+ t._tid=setTimeout(function(){t.classList.remove('show')},3000);
+}
 function avErr(el){var p=el.parentElement;if(!p)return;el.remove();p.innerHTML=avI()}
 function postItemClick(pid,ev){if(ev&&ev.target&&ev.target.closest('button,a'))return;location.href='/post/?id='+pid}
 
@@ -78,6 +88,59 @@ async function init(){
  await prefetchUids([rootPost].concat(allReplies));
  await fetchLikes(allIds);
  renderThread();
+ subscribeRT();
+}
+
+/* ── realtime ── */
+function subscribeRT(){
+ if(!rootPost)return;
+ var rid=String(rootPost.id);
+ supa.channel('koro-post-detail').on('postgres_changes',{event:'INSERT',schema:'public',table:'posts'},async function(payload){
+  var p=payload.new;if(!p||!p.id)return;
+  if(String(p.root_id)!==rid)return;
+  if(myProfile&&p.author_handle===myProfile.user_handle)return;
+  if(p.author_handle&&!uidCache[p.author_handle]){await prefetchUids([p])}
+  allReplies.push(p);likeCache[p.id]=0;
+  var isNested=String(p.reply_to)!==rid;
+  var newCard=document.createElement('div');newCard.innerHTML=postCard(p,isNested);
+  var newEl=newCard.firstChild;
+  if(!isNested){
+   /* 直接リプ: compose boxの直前（＝元ポストのさらに上）に挿入 */
+   var atBottom=window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-100;
+   var composeBar=document.getElementById('reply-bar-'+rid);
+   if(composeBar)composeBar.parentElement.insertBefore(newEl,composeBar);
+   else{var tw=document.getElementById('thread-wrap');if(tw)tw.appendChild(newEl);}
+   if(atBottom)window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+  }else{
+   var nd=document.getElementById('nested-'+p.reply_to);
+   if(nd){var nb=nd.querySelector('.inline-reply-bar');if(nb)nd.insertBefore(newEl,nb);else nd.appendChild(newEl)}
+   else{
+    var targetEl=document.querySelector('[data-post-id="'+p.reply_to+'"]');
+    if(targetEl)targetEl.after(newEl);
+   }
+  }
+  try{new Audio('../oto.mp3').play().catch(function(){});}catch(ex){}
+ }).on('postgres_changes',{event:'INSERT',schema:'public',table:'likes'},function(payload){
+  var l=payload.new;if(!l||!l.post_id)return;
+  if(myProfile&&l.user_id===myProfile.id)return; /* 自分のいいね: optimistic済みでスキップ */
+  var pid=String(l.post_id);
+  likeCache[pid]=(likeCache[pid]||0)+1;
+  var el=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+  if(el)el.textContent=likeCache[pid]||'';
+  var btn=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
+  if(btn){var ic=btn.querySelector('.like-icon');if(ic)ic.innerHTML=heartI();btn.classList.add('liked')}
+ }).on('postgres_changes',{event:'DELETE',schema:'public',table:'likes'},function(payload){
+  var l=payload.old;if(!l||!l.post_id)return;
+  if(myProfile&&l.user_id===myProfile.id)return;
+  var pid=String(l.post_id);
+  likeCache[pid]=Math.max(0,(likeCache[pid]||0)-1);
+  var el=document.querySelector('[data-post-id="'+pid+'"] .like-count');
+  if(el)el.textContent=likeCache[pid]||'';
+ }).on('postgres_changes',{event:'DELETE',schema:'public',table:'posts'},function(payload){
+  var pid=payload.old.id;if(!pid)return;
+  var el=document.querySelector('[data-post-id="'+pid+'"]');
+  if(el){el.style.opacity='0';setTimeout(function(){el.remove()},300)}
+ }).subscribe();
 }
 
 function renderHeader(session){
@@ -114,7 +177,7 @@ async function fetchLikes(ids){
  }catch(e){console.error('fetchLikes:',e)}
 }
 async function togLike(pid){
- if(!myProfile){alert('ログインしてください');return}
+ if(!myProfile){showToast('ログインしてください');return}
  var el=document.querySelector('[data-post-id="'+pid+'"] .like-btn');
  var ce=document.querySelector('[data-post-id="'+pid+'"] .like-count');
  var ic=document.querySelector('[data-post-id="'+pid+'"] .like-icon');
@@ -136,7 +199,7 @@ async function togLike(pid){
   el.classList.toggle('liked',!!myLikes[pid]);
   if(ic)ic.innerHTML=myLikes[pid]?heartI():heartOI();
   if(ce)ce.textContent=likeCache[pid]||'';
-  alert('いいね保存失敗: '+(err.message||err));
+  console.error('like:',err);showToast('いいねできませんでした','error');
  }
 }
 
@@ -148,15 +211,15 @@ async function delPost(pid,isRoot){
   if(r.error)throw r.error;
   if(isRoot){location.href='/'}
   else{var el=document.querySelector('[data-post-id="'+pid+'"]');if(el){el.style.opacity='0';setTimeout(function(){el.remove()},300)}}
- }catch(err){alert('削除に失敗しました: '+(err.message||err))}
+ }catch(err){console.error('del:',err);showToast('削除できませんでした','error')}
 }
 
 /* ── prefetch avatars ── */
 async function prefetchUids(posts){
  var hs=[...new Set(posts.map(function(p){return p.author_handle}).filter(Boolean))];
  var miss=hs.filter(function(h){return !uidCache[h]});if(!miss.length)return;
- var r=await supa.from('profiles').select('id,user_handle').in('user_handle',miss);
- if(r.data)r.data.forEach(function(p){uidCache[p.user_handle]=p.id});
+ var r=await supa.from('profiles').select('id,user_handle,verified').in('user_handle',miss);
+ if(r.data)r.data.forEach(function(p){uidCache[p.user_handle]=p.id;if(p.verified)verifiedCache[p.user_handle]=true});
 }
 function avSrcFor(handle){var uid=handle?uidCache[handle]:'';return uid?(supa.storage.from(BUCKET).getPublicUrl('profiles/'+uid+'/avatar').data.publicUrl+'?v='+Date.now()):null}
 
@@ -176,7 +239,7 @@ function postCard(p,nested){
   '<a href="/user/?@'+esc(p.author_handle||'')+'" class="post-avatar-sm">'+avH+'</a>'+
   '<div class="post-row-content">'+
   '<div class="post-meta">'+
-  '<span class="post-name">'+esc(p.author||'ななし')+'</span>'+
+  '<span class="post-name">'+esc(p.author||'ななし')+(verifiedCache[p.author_handle]?' '+verifyI():'')+'</span>'+
   '<span class="post-handle">@'+esc(p.author_handle||'none')+'</span>'+
   '<span class="post-time" title="'+(p.created_at||'')+'">'+fmtD(p.created_at)+'</span>'+
   '</div>'+
@@ -196,7 +259,8 @@ function renderThread(){
   children[parent].push(p);
  });
  var totalRp=allReplies.length;
- /* root post */
+
+ /* ── build root post HTML (rendered last = bottom) ── */
  var rpa=splitContent(rootPost.content);
  var rImgH=rpa.img?'<div class="post-image" style="margin-top:10px"><img src="'+esc(rpa.img)+'" loading="lazy"></div>':'';
  var rAvSrc=avSrcFor(rootPost.author_handle);
@@ -208,15 +272,14 @@ function renderThread(){
  var rqpa=rootPost.repost_of?splitContent(rootPost.repost_content||''):null;
  var rqImgH=rqpa&&rqpa.img?'<div class="post-image" style="margin-top:8px"><img src="'+esc(rqpa.img)+'" loading="lazy"></div>':'';
  var quoteH=rootPost.repost_of?('<div class="repost-quote"><div class="repost-quote-meta"><b>'+esc(rootPost.repost_author||'')+'</b> @'+esc(rootPost.repost_handle||'')+'</div><div class="repost-quote-body">'+autoLink(esc(rqpa?rqpa.text||'':''))+'</div>'+rqImgH+'</div>'):'';
-
  var rRecoroLabel=rootPost.repost_of?'<div class="recoro-label">'+repostI()+' リコロ</div>':'';
- var html='<div class="thread-root" data-post-id="'+esc(rootPost.id)+'" >'+
+ var rootHTML='<div class="thread-root" id="thread-root-el" data-post-id="'+esc(rootPost.id)+'">'+
   rRecoroLabel+
   '<div class="post-row" style="align-items:flex-start;gap:12px">'+
   '<a href="/user/?@'+esc(rootPost.author_handle||'')+'" class="thread-root-av">'+rAvH+'</a>'+
   '<div style="flex:1">'+
   '<div class="post-meta" style="margin-bottom:6px">'+
-  '<span class="post-name" style="font-size:16px">'+esc(rootPost.author||'ななし')+'</span>'+
+  '<span class="post-name" style="font-size:16px">'+esc(rootPost.author||'ななし')+(verifiedCache[rootPost.author_handle]?' '+verifyI():'')+'</span>'+
   '<span class="post-handle">@'+esc(rootPost.author_handle||'')+'</span>'+
   '</div></div></div>'+
   '<div class="post-body" style="font-size:18px;line-height:1.7;margin-top:10px;padding:0 2px">'+autoLink(esc(rpa.text))+'</div>'+
@@ -225,38 +288,36 @@ function renderThread(){
   '<div class="post-actions" style="padding-top:4px;border-top:1px solid var(--border);margin-top:4px">'+rLikeH+rDelH+'</div>'+
   '</div>';
 
- /* inline reply compose */
- html+=renderInlineReply(rid,'');
-
- /* replies section */
+ /* ── 1. replies (古い順＝top, 新しい順＝bottom) ── */
+ var html='';
  if(totalRp>0){html+='<div class="thread-reply-label">'+totalRp+'件の返信</div>'}
 
- /* top-level replies */
  var topReplies=children[rid]||[];
+ if(topReplies.length===0&&totalRp===0){
+  html+='<div class="load-more-msg">まだ返信がありません。最初に返信しましょう！</div>'
+ }
  topReplies.forEach(function(p){
   html+=postCard(p,false);
   var nested=children[String(p.id)]||[];
   if(nested.length>0){
-   /* expand button */
    html+='<button class="expand-replies-btn" id="expbtn-'+esc(p.id)+'" onclick="expandReplies(\''+ea(p.id)+'\')">'+
     '▶ '+nested.length+'件の返信を表示</button>';
-   /* hidden nested replies */
    html+='<div id="nested-'+esc(p.id)+'" style="display:none">';
-   nested.forEach(function(np){
-    html+=postCard(np,true);
-    /* reply-to-reply compose placeholder */
-   });
-   /* nested reply compose */
+   nested.forEach(function(np){html+=postCard(np,true);});
    html+=renderInlineReply(String(p.id),'nested-reply-bar-'+esc(p.id));
    html+='</div>';
   }
  });
 
- if(topReplies.length===0&&totalRp===0){
-  html+='<div class="load-more-msg">まだ返信がありません。最初に返信しましょう！</div>'
- }
+ /* ── 2. compose box (返信入力 → 元ポストの直上) ── */
+ html+=renderInlineReply(rid,'');
+
+ /* ── 3. root post (最下部に固定) ── */
+ html+=rootHTML;
 
  document.getElementById('thread-wrap').innerHTML=html;
+ /* 元ポストが見えるよう最下部へスクロール */
+ requestAnimationFrame(function(){window.scrollTo(0,document.body.scrollHeight)});
 }
 
 function expandReplies(pid){
@@ -309,7 +370,7 @@ function focusReply(targetId,handle){
 
 /* ── submit reply ── */
 async function doReply(targetId){
- if(!myProfile){alert('ログインしてください');return}
+ if(!myProfile){showToast('ログインしてください');return}
  var ta=document.getElementById('ta-'+targetId);
  if(!ta)return;
  var txt=ta.value.trim();if(!txt)return;
@@ -344,7 +405,7 @@ async function doReply(targetId){
   /* update reply label */
   var lbl=document.querySelector('.thread-reply-label');
   if(lbl){lbl.textContent=allReplies.length+'件の返信'}
- }catch(err){alert('返信に失敗しました: '+(err.message||err))}
+ }catch(err){console.error('reply:',err);showToast('返信できませんでした','error')}
  if(btn)btn.disabled=false;
 }
 
